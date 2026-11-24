@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from usbcopy import api
 from usbcopy.api import _open_stream_connection, run_event_stream
 from usbcopy.app import create_app
 from usbcopy.auth import SessionManager, hash_password
@@ -253,9 +255,12 @@ def test_failed_login_does_not_write_audit(client: TestClient, conn):
     assert conn.execute("SELECT COUNT(*) FROM audit").fetchone()[0] == 0
 
 
-def test_audit_failure_does_not_block_login(config: Config, tmp_path: Path, caplog):
-    broken = replace(config, db_path=tmp_path / "uninitialised.db")
-    with TestClient(create_app(broken, start_background=False)) as broken_client:
+def test_audit_failure_does_not_block_login(config: Config, monkeypatch, caplog):
+    def broken_open_db(path):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(api, "open_db", broken_open_db)
+    with TestClient(create_app(config, start_background=False)) as broken_client:
         with caplog.at_level(logging.WARNING, logger="usbcopy.api"):
             response = post_login(broken_client)
         assert response.status_code == 200

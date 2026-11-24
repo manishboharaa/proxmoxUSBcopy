@@ -10,6 +10,7 @@ the watcher only forwards event paths and leaves threading to the caller.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -24,6 +25,8 @@ from watchdog.observers import Observer
 from usbcopy.runs import interrupt_active_run
 
 EVENT_VERSION = 1
+
+logger = logging.getLogger(__name__)
 
 _DRIVE_REMOVED_REASON = "drive removed"
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
@@ -361,6 +364,12 @@ class EventSpoolWatcher:
 
     def start(self) -> None:
         if self._observer is not None:
+            return
+        if not self._spool_dir.is_dir():
+            logger.warning(
+                "event spool directory %s is not available; watcher not started",
+                self._spool_dir,
+            )
             return
         observer = Observer()
         observer.schedule(self._handler, str(self._spool_dir), recursive=False)
