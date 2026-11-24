@@ -178,3 +178,38 @@ def test_preserve_mtime_false_does_not_force_mtime(src, dst):
     copy_file(src, dst, preserve_mtime=False)
     assert dst.read_bytes() == b"no mtime"
     assert int(dst.stat().st_mtime) != 1_700_000_000
+
+
+def test_on_temp_callback_receives_temp_path_and_success_removes_it(src, dst):
+    seen: list[Path] = []
+
+    def capture(path: Path) -> None:
+        assert path.exists()
+        assert path.parent == dst.parent
+        seen.append(path)
+
+    result = copy_file(src, dst, on_temp=capture)
+
+    assert len(seen) == 1
+    temp_path = seen[0]
+    assert temp_path.parent == dst.parent
+    assert temp_path.name.startswith(".usbcopy.")
+    assert temp_path.name.endswith(".part")
+    assert not temp_path.exists()
+    assert dst.read_bytes() == b"payload"
+    assert result.bytes_copied == len(b"payload")
+
+
+def test_on_temp_failure_cleans_temp_and_reraises(src, dst):
+    seen: list[Path] = []
+
+    def boom(path: Path) -> None:
+        seen.append(path)
+        raise RuntimeError("callback failed")
+
+    with pytest.raises(RuntimeError, match="callback failed"):
+        copy_file(src, dst, on_temp=boom)
+
+    assert len(seen) == 1
+    assert not dst.exists()
+    assert list(dst.parent.glob(".usbcopy.*.part")) == []

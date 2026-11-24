@@ -202,6 +202,7 @@ def _copy_item(
                 chunk_size=chunk_size,
                 verify_sha256=config.verify_sha256,
                 preserve_mtime=config.preserve_mtime,
+                on_temp=lambda temp: _record_temp_path(conn, item_id, temp),
             )
         except (CopyError, OSError) as exc:
             last_error = exc
@@ -302,6 +303,15 @@ def _start_item(conn: sqlite3.Connection, item_id: int) -> None:
     conn.commit()
 
 
+def _record_temp_path(conn: sqlite3.Connection, item_id: int, temp_path: Path) -> None:
+    """Record the copy engine's temporary file for startup cleanup."""
+    conn.execute(
+        "UPDATE run_items SET temp_path = ? WHERE id = ?",
+        (str(temp_path), item_id),
+    )
+    conn.commit()
+
+
 def _finish_item(
     conn: sqlite3.Connection,
     item_id: int,
@@ -311,13 +321,10 @@ def _finish_item(
     sha256: str | None = None,
     error: str | None = None,
 ) -> None:
-    assignments = [
-        "status = ?",
-        f"finished_at = {_NOW}",
-        "error = ?",
-        "temp_path = NULL",
-    ]
+    assignments = ["status = ?", f"finished_at = {_NOW}", "error = ?"]
     values: list[object] = [status, error]
+    if status == COMPLETED:
+        assignments.append("temp_path = NULL")
     if bytes_done is not None:
         assignments.append("bytes_done = ?")
         values.append(bytes_done)

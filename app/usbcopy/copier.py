@@ -14,6 +14,7 @@ import hashlib
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,6 +91,7 @@ def copy_file(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     verify_sha256: bool = True,
     preserve_mtime: bool = True,
+    on_temp: Callable[[Path], None] | None = None,
 ) -> CopyResult:
     """Copy ``source`` to ``destination`` safely and return its SHA-256.
 
@@ -98,6 +100,11 @@ def copy_file(
     verified. Metadata is applied to the temp file, which is then published
     with a no-overwrite hard link. Any failure removes the temporary file and
     re-raises; the destination name is never left holding partial content.
+
+    When ``on_temp`` is given it is called with the temporary file path
+    immediately after that file is created and before streaming starts. If the
+    callback raises, the temporary file is still removed before the exception
+    is re-raised.
     """
     source = Path(source)
     destination = Path(destination)
@@ -123,6 +130,8 @@ def copy_file(
             temp_file = os.fdopen(fd, "wb")
             fd = -1
             with temp_file:
+                if on_temp is not None:
+                    on_temp(temp_path)
                 with open(source, "rb") as source_file:
                     while True:
                         chunk = source_file.read(chunk_size)

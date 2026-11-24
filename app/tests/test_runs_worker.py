@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from usbcopy import copier as copier_module
 from usbcopy import worker as worker_module
 from usbcopy.config import Config, Destination
 from usbcopy.copier import CopyError
@@ -278,6 +279,29 @@ def test_retry_exhaustion_fails_item_and_continues(conn, config, dirs, monkeypat
     assert list(dirs["movies"].rglob(".usbcopy.*.part")) == []
 
 
+def test_failed_item_keeps_recorded_temp_path(conn, config, plan, dirs, monkeypatch):
+    def fail_verify(path, expected_sha256):
+        raise CopyError("hash mismatch")
+
+    monkeypatch.setattr(copier_module, "_verify", fail_verify)
+
+    run_id = create_run(conn, None, None, "movies", "review", plan)
+    execute_run(conn, run_id, config, {"movies": dirs["movies"]}, threading.Event())
+
+    run = get_run(conn, run_id)
+    assert run["status"] == "completed_with_errors"
+    item = _items(conn, run_id)[0]
+    assert item["status"] == "failed"
+    assert item["temp_path"] is not None
+    temp_path = Path(item["temp_path"])
+    assert temp_path.parent == dirs["movies"] / "Heat (1995)"
+    assert temp_path.name.startswith(".usbcopy.")
+    assert temp_path.name.endswith(".part")
+    assert not temp_path.exists()
+    assert list(dirs["movies"].rglob(".usbcopy.*.part")) == []
+    assert not (dirs["movies"] / "Heat (1995)/Heat.mkv").exists()
+
+
 def test_backoff_is_capped_at_ten_seconds(conn, dirs, monkeypatch):
     plan = _plan_for(dirs, [("bad.mkv", "bad.mkv")])
     sleeps: list[float] = []
@@ -361,6 +385,12 @@ def test_cancellation_during_retries_marks_item_interrupted(
     sleeps: list[float] = []
 
     def fails_then_cancels(*args, **kwargs):
+        on_temp = kwargs.get("on_temp")
+        if on_temp is not None:
+            temp = Path(args[1]).parent / ".usbcopy.fake.part"
+            temp.write_bytes(b"")
+            on_temp(temp)
+            temp.unlink()
         cancel.set()
         raise CopyError("drive removed")
 
@@ -374,6 +404,8 @@ def test_cancellation_during_retries_marks_item_interrupted(
     item = _items(conn, run_id)[0]
     assert item["status"] == "interrupted"
     assert item["attempts"] == 1
+    assert item["temp_path"] is not None
+    assert not Path(item["temp_path"]).exists()
     assert sleeps == []
     assert list(dirs["movies"].rglob(".usbcopy.*.part")) == []
 
