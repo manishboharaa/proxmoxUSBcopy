@@ -110,8 +110,10 @@ reset_stubs() {
     FAKE_FSTYPE=''
     FAKE_MOUNTED=0
     FAKE_LS_FAIL=0
+    FAIL_MKTEMP_ATTEMPTS=0
     UMOUNT_FAILS=0
     LAZY_RESULT=0
+    rm -f -- "$WORK/mktemp-count"
 }
 
 load_single_event() {
@@ -163,6 +165,19 @@ run_mount_with_stubs() {
         blkid() { return 1; }
         udevadm() { return 1; }
         sleep() { :; }
+        mktemp() {
+            local count_file="$WORK/mktemp-count"
+            local count=0
+            if [[ -f $count_file ]]; then
+                count=$(<"$count_file")
+            fi
+            count=$((count + 1))
+            printf '%s\n' "$count" >"$count_file"
+            if ((count <= ${FAIL_MKTEMP_ATTEMPTS:-0})); then
+                return 1
+            fi
+            command mktemp "$@"
+        }
         ls() {
             if [[ ${FAKE_LS_FAIL:-0} == 1 ]]; then
                 return 1
@@ -310,6 +325,22 @@ state_value=$(<"$state_ok/fake1")
 assert_event_json "$(json_last "$out")" add TEST-STATE
 assert_contains 'mount -o ro,nosuid,nodev,noexec -t ext4' "$(<"$STUB_LOG")" 'stub log'
 pass "fresh mount writes state under --state-dir and emits add"
+
+reset_stubs
+FAIL_MKTEMP_ATTEMPTS=1
+mnt_state_transient="$WORK/mnt-state-transient"
+spool_state_transient="$WORK/spool-state-transient"
+state_transient="$WORK/state-transient"
+out=$(run_mount_with_stubs --device /dev/fake1 --uuid TEST-TRANSIENT --fs-type ext4 \
+    --label L --serial S --mount-root "$mnt_state_transient" \
+    --spool "$spool_state_transient" --state-dir "$state_transient")
+assert_event_json "$(json_last "$out")" add TEST-TRANSIENT
+[[ -f "$state_transient/fake1" ]] || fail "transient state failure did not eventually write state"
+[[ -d "$mnt_state_transient/TEST-TRANSIENT" ]] || fail "transient state failure released the mount"
+if grep -q '^umount ' "$STUB_LOG"; then
+    fail "transient state failure unmounted the fresh mount"
+fi
+pass "transient state-write failure retries and publishes add without unmounting"
 
 reset_stubs
 blocker="$WORK/state-blocker"

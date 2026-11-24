@@ -101,7 +101,7 @@ print(json.dumps(payload, separators=(",", ":")))
 PY
 }
 
-write_state() {
+write_state_once() {
     local tmp
     local final
 
@@ -119,6 +119,21 @@ write_state() {
         rm -f -- "$tmp"
         return 1
     fi
+}
+
+write_state() {
+    local attempt
+
+    for attempt in 1 2 3; do
+        if write_state_once; then
+            return 0
+        fi
+        if ((attempt < 3)); then
+            log "state write attempt $attempt failed for $device; retrying"
+            sleep 0.5 || true
+        fi
+    done
+    return 1
 }
 
 write_event() {
