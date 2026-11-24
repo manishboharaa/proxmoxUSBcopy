@@ -22,8 +22,15 @@ def create_run(
     destination_key: str,
     mode: str,
     plan: RunPlan,
+    *,
+    commit: bool = True,
 ) -> int:
-    """Insert a queued run and its pending items, returning the run id."""
+    """Insert a queued run and its pending items, returning the run id.
+
+    Callers that must write more rows atomically can pass ``commit=False``;
+    the run, its items, and their follow-up writes then share one transaction
+    and the caller commits. Default callers keep the previous behaviour.
+    """
     cursor = conn.execute(
         "INSERT INTO runs "
         "(drive_id, inventory_id, destination_key, mode, status, "
@@ -45,7 +52,8 @@ def create_run(
         "VALUES (?, ?, ?, ?, 'pending')",
         [(run_id, item.source_rel, item.size, item.dest_rel) for item in plan.items],
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return run_id
 
 

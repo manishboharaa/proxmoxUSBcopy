@@ -229,28 +229,33 @@ def build_api_router(
                 detail=f"destination unavailable: {exc}",
             ) from exc
 
-        run_id = create_run(
-            conn,
-            int(inventory["drive_id"]),
-            inventory_id,
-            destination.key,
-            "review",
-            plan,
-        )
-        detail = json.dumps(
-            {
-                "destination": destination.key,
-                "files": len(plan.items),
-                "bytes": plan.total_bytes,
-            },
-            sort_keys=True,
-        )
-        conn.execute(
-            "INSERT INTO audit (actor, action, detail_json) "
-            "VALUES (?, 'import_start', ?)",
-            (session.username, detail),
-        )
-        conn.commit()
+        try:
+            run_id = create_run(
+                conn,
+                int(inventory["drive_id"]),
+                inventory_id,
+                destination.key,
+                "review",
+                plan,
+                commit=False,
+            )
+            detail = json.dumps(
+                {
+                    "destination": destination.key,
+                    "files": len(plan.items),
+                    "bytes": plan.total_bytes,
+                },
+                sort_keys=True,
+            )
+            conn.execute(
+                "INSERT INTO audit (actor, action, detail_json) "
+                "VALUES (?, 'import_start', ?)",
+                (session.username, detail),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
         enqueue(run_id)
         return {"run_id": run_id}

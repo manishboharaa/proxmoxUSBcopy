@@ -170,6 +170,42 @@ def test_import_creates_run_audit_and_enqueue(
     assert worker_mock.enqueued == [run_id]
 
 
+def test_audit_failure_rolls_back_run_and_items(
+    app,
+    inventory: int,
+    conn,
+    worker_mock: WorkerMock,
+):
+    conn.execute(
+        "CREATE TRIGGER fail_import_audit BEFORE INSERT ON audit "
+        "WHEN NEW.action = 'import_start' "
+        "BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END"
+    )
+    conn.commit()
+
+    with TestClient(app, raise_server_exceptions=False) as failing_client:
+        login = failing_client.post(
+            "/api/login", json={"username": "admin", "password": PASSWORD}
+        )
+        assert login.status_code == 200
+        response = failing_client.post(
+            "/api/imports",
+            json={
+                "inventory_id": inventory,
+                "destination": "movies",
+                "paths": ["Movies"],
+                "csrf": login.json()["csrf"],
+            },
+        )
+
+    assert response.status_code == 500
+    assert run_count(conn) == 0
+    assert conn.execute("SELECT COUNT(*) FROM run_items").fetchone()[0] == 0
+    assert import_audit_count(conn) == 0
+    assert conn.execute("SELECT COUNT(*) FROM audit").fetchone()[0] == 1
+    assert worker_mock.enqueued == []
+
+
 def test_import_requires_authentication(
     client: TestClient,
     inventory: int,
