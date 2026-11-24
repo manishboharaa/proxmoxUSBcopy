@@ -447,6 +447,81 @@ def test_execute_run_skips_non_queued_run(conn, config, plan, dirs):
     assert _items(conn, run_id)[0]["status"] == "pending"
 
 
+def test_execute_run_ignores_non_queued_run(conn, config, plan, dirs):
+    run_id = create_run(conn, None, None, "movies", "review", plan)
+    conn.execute(
+        "UPDATE runs SET status = 'interrupted', error = 'drive removed' WHERE id = ?",
+        (run_id,),
+    )
+    conn.commit()
+
+    execute_run(conn, run_id, config, {"movies": dirs["movies"]}, threading.Event())
+
+    run = get_run(conn, run_id)
+    assert run["status"] == "interrupted"
+    assert run["error"] == "drive removed"
+    assert [item["status"] for item in _items(conn, run_id)] == ["pending"]
+    assert not (dirs["movies"] / "Heat (1995)/Heat.mkv").exists()
+    assert list(dirs["movies"].rglob(".usbcopy.*.part")) == []
+
+
+@pytest.mark.parametrize("raise_error", [False, True])
+def test_interrupt_during_copy_is_not_resurrected(
+    conn, config, dirs, monkeypatch, raise_error
+):
+    plan = _plan_for(dirs, [("one.mkv", "one.mkv"), ("two.mkv", "two.mkv")])
+    run_id = create_run(conn, 1, None, "movies", "review", plan)
+    real = worker_module.copy_file
+    calls = {"n": 0}
+
+    def interrupting(source, destination, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            interrupt_active_run(conn, 1, "drive removed")
+            if raise_error:
+                raise CopyError("drive removed")
+        return real(source, destination, **kwargs)
+
+    monkeypatch.setattr(worker_module, "copy_file", interrupting)
+
+    execute_run(conn, run_id, config, {"movies": dirs["movies"]}, threading.Event())
+
+    run = get_run(conn, run_id)
+    assert run["status"] == "interrupted"
+    assert run["error"] == "drive removed"
+    first, second = _items(conn, run_id)
+    assert first["status"] == "interrupted"
+    assert second["status"] == "cancelled"
+    assert calls["n"] == 1
+    assert list(dirs["movies"].rglob(".usbcopy.*.part")) == []
+    if raise_error:
+        assert not (dirs["movies"] / "one.mkv").exists()
+    else:
+        assert (dirs["movies"] / "one.mkv").read_bytes() == b"hi"
+
+
+def test_second_executor_cannot_claim_a_run(conn, config, plan, dirs, monkeypatch):
+    run_id = create_run(conn, None, None, "movies", "review", plan)
+    stale = get_run(conn, run_id)
+    monkeypatch.setattr(worker_module, "get_run", lambda connection, rid: stale)
+
+    real = worker_module.copy_file
+    calls: list[Path] = []
+
+    def recording(source, destination, **kwargs):
+        calls.append(Path(destination))
+        return real(source, destination, **kwargs)
+
+    monkeypatch.setattr(worker_module, "copy_file", recording)
+
+    execute_run(conn, run_id, config, {"movies": dirs["movies"]}, threading.Event())
+    execute_run(conn, run_id, config, {"movies": dirs["movies"]}, threading.Event())
+
+    assert calls == [dirs["movies"] / "Heat (1995)/Heat.mkv"]
+    assert get_run(conn, run_id)["status"] == "completed"
+    assert [item["status"] for item in _items(conn, run_id)] == ["completed"]
+
+
 def test_progress_persists_on_item_transitions_with_frozen_clock(
     conn, config, dirs, monkeypatch
 ):

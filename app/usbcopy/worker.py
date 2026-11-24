@@ -87,11 +87,13 @@ def execute_run(
     if run["status"] != "queued":
         logger.info("run %s is %s; nothing to execute", run_id, run["status"])
         return
+    if not _mark_running(conn, run_id):
+        logger.info("run %s was already claimed by another executor", run_id)
+        return
 
     destination_key = run["destination_key"]
     dest_root = dest_roots.get(destination_key)
     source_root = _source_root(conn, run)
-    _mark_running(conn, run_id)
     progress = _RunProgress(conn, run_id)
     items = conn.execute(
         "SELECT * FROM run_items WHERE run_id = ? ORDER BY id", (run_id,)
@@ -137,7 +139,7 @@ def execute_run(
             conn.execute(
                 "UPDATE run_items "
                 f"SET status = 'failed', error = ?, finished_at = {_NOW} "
-                "WHERE run_id = ? AND status IN ('queued', 'running')",
+                "WHERE run_id = ? AND status = 'running'",
                 (str(exc), run_id),
             )
             conn.commit()
@@ -156,25 +158,33 @@ def _copy_item(
     dest_root: Path,
     cancel_event: threading.Event,
 ) -> tuple[str, int]:
-    """Copy one item with retries; returns (outcome, bytes_copied)."""
+    """Copy one item with retries; returns (outcome, bytes_copied).
+
+    Every item transition is guarded on the item still being ``running``, so
+    an external interruption can never be overwritten by this executor.
+    """
     item_id = int(item["id"])
+    if not _start_item(conn, item_id):
+        return CANCELLED, 0
+
     try:
         source = _source_path(str(item["rel_path"]), source_root)
         destination = _destination_path(dest_root, str(item["dest_rel_path"]))
     except ValueError as exc:
-        _finish_item(conn, item_id, FAILED, error=str(exc))
+        if not _finish_item(conn, item_id, FAILED, error=str(exc)):
+            return CANCELLED, 0
         return FAILED, 0
 
-    _start_item(conn, item_id)
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        _finish_item(
+        if not _finish_item(
             conn,
             item_id,
             FAILED,
             error=f"cannot create destination directory: {exc}",
-        )
+        ):
+            return CANCELLED, 0
         return FAILED, 0
 
     attempts = max(1, int(config.retries))
@@ -191,10 +201,14 @@ def _copy_item(
             )
             return CANCELLED, 0
 
-        conn.execute(
-            "UPDATE run_items SET attempts = ? WHERE id = ?", (attempt, item_id)
+        cursor = conn.execute(
+            "UPDATE run_items SET attempts = ? WHERE id = ? AND status = 'running'",
+            (attempt, item_id),
         )
         conn.commit()
+        if cursor.rowcount == 0:
+            return CANCELLED, 0
+
         try:
             result = copy_file(
                 source,
@@ -210,17 +224,19 @@ def _copy_item(
                 _finish_item(conn, item_id, "interrupted", error=str(exc))
                 return CANCELLED, 0
             if attempt == attempts:
-                _finish_item(conn, item_id, FAILED, error=str(exc))
+                if not _finish_item(conn, item_id, FAILED, error=str(exc)):
+                    return CANCELLED, 0
                 return FAILED, 0
             sleep(_backoff(attempt))
         else:
-            _finish_item(
+            if not _finish_item(
                 conn,
                 item_id,
                 COMPLETED,
                 bytes_done=result.bytes_copied,
                 sha256=result.sha256,
-            )
+            ):
+                return CANCELLED, 0
             return COMPLETED, int(result.bytes_copied)
 
     raise AssertionError("retry loop exited without an outcome")
@@ -270,14 +286,16 @@ def _destination_path(dest_root: Path, dest_rel: str) -> Path:
     return dest_root.joinpath(*rel.parts)
 
 
-def _mark_running(conn: sqlite3.Connection, run_id: int) -> None:
-    conn.execute(
+def _mark_running(conn: sqlite3.Connection, run_id: int) -> bool:
+    """Claim a queued run; return False when another executor already did."""
+    cursor = conn.execute(
         "UPDATE runs "
         f"SET status = 'running', started_at = {_NOW}, finished_at = NULL, "
-        "error = NULL WHERE id = ?",
+        "error = NULL WHERE id = ? AND status = 'queued'",
         (run_id,),
     )
     conn.commit()
+    return cursor.rowcount > 0
 
 
 def _finish_run(
@@ -285,22 +303,28 @@ def _finish_run(
     run_id: int,
     status: str,
     error: str | None,
-) -> None:
-    conn.execute(
-        f"UPDATE runs SET status = ?, finished_at = {_NOW}, error = ? WHERE id = ?",
+) -> bool:
+    """Record a terminal run status without overwriting an interrupted run."""
+    cursor = conn.execute(
+        f"UPDATE runs SET status = ?, finished_at = {_NOW}, error = ? "
+        "WHERE id = ? AND status = 'running'",
         (status, error, run_id),
     )
     conn.commit()
+    return cursor.rowcount > 0
 
 
-def _start_item(conn: sqlite3.Connection, item_id: int) -> None:
-    conn.execute(
+def _start_item(conn: sqlite3.Connection, item_id: int) -> bool:
+    """Move a pending item to running; return False when it is not startable."""
+    cursor = conn.execute(
         "UPDATE run_items "
         f"SET status = 'running', started_at = {_NOW}, finished_at = NULL, "
-        "error = NULL, temp_path = NULL WHERE id = ?",
+        "error = NULL, temp_path = NULL "
+        "WHERE id = ? AND status IN ('pending', 'queued')",
         (item_id,),
     )
     conn.commit()
+    return cursor.rowcount > 0
 
 
 def _record_temp_path(conn: sqlite3.Connection, item_id: int, temp_path: Path) -> None:
@@ -320,7 +344,8 @@ def _finish_item(
     bytes_done: int | None = None,
     sha256: str | None = None,
     error: str | None = None,
-) -> None:
+) -> bool:
+    """Record a terminal item status only while the item is still running."""
     assignments = ["status = ?", f"finished_at = {_NOW}", "error = ?"]
     values: list[object] = [status, error]
     if status == COMPLETED:
@@ -332,11 +357,13 @@ def _finish_item(
         assignments.append("sha256 = ?")
         values.append(sha256)
     values.append(item_id)
-    conn.execute(
-        f"UPDATE run_items SET {', '.join(assignments)} WHERE id = ?",
+    cursor = conn.execute(
+        f"UPDATE run_items SET {', '.join(assignments)} "
+        "WHERE id = ? AND status = 'running'",
         values,
     )
     conn.commit()
+    return cursor.rowcount > 0
 
 
 def _cancel_items(conn: sqlite3.Connection, items: list[sqlite3.Row]) -> None:
