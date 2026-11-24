@@ -52,6 +52,7 @@
   --green-soft: #e2f1e8;
   --red: #b02a22;
   --red-soft: #fae8e6;
+  --red-line: #ecc3bf;
   --blue: #2a608e;
   --blue-soft: #e5eef6;
   --neutral-soft: #ecf0ef;
@@ -114,6 +115,7 @@
   --green-soft: #16301f;
   --red: #f08a80;
   --red-soft: #391d1a;
+  --red-line: #5f2e2a;
   --blue: #93c7ec;
   --blue-soft: #16293a;
   --neutral-soft: #232e34;
@@ -130,6 +132,7 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  scroll-padding-top: 80px;
 }
 
 body {
@@ -515,10 +518,10 @@ h1 {
   white-space: nowrap;
 }
 
-.tag-warn {
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
-  color: var(--accent-ink);
+.tag-bad {
+  border-color: var(--red-line);
+  background: var(--red-soft);
+  color: var(--red);
 }
 
 .tag-neutral {
@@ -940,6 +943,11 @@ h1 {
   flex: none;
   accent-color: var(--accent-fill-strong);
   cursor: pointer;
+}
+
+.tree-check:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .tree-icon {
@@ -1537,6 +1545,10 @@ h1 {
 }
 
 @media (max-width: 920px) {
+  html {
+    scroll-padding-top: 120px;
+  }
+
   .topbar-inner {
     flex-wrap: wrap;
     gap: var(--space-3);
@@ -1603,6 +1615,10 @@ h1 {
 }
 
 @media (max-width: 640px) {
+  html {
+    scroll-padding-top: 160px;
+  }
+
   .facts {
     grid-template-columns: 1fr;
   }

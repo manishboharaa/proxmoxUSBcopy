@@ -197,13 +197,13 @@
   <div class="kpi-grid" aria-label="Key numbers">
     <article class="panel kpi">
       <p class="kpi-label">Copied today</p>
-      <p class="kpi-value">34<span class="kpi-unit">files</span></p>
-      <p class="kpi-note">318.3 GB across four completed runs.</p>
+      <p class="kpi-value">32<span class="kpi-unit">files</span></p>
+      <p class="kpi-note">314.8 GB across four completed runs.</p>
     </article>
     <article class="panel kpi">
       <p class="kpi-label">Average write speed</p>
       <p class="kpi-value">198<span class="kpi-unit">MB/s</span></p>
-      <p class="kpi-note">Peak 236 MB/s at 19:58.</p>
+      <p class="kpi-note">Peak 236 MB/s at 19:50.</p>
     </article>
     <article class="panel kpi">
       <p class="kpi-label">Library free</p>
@@ -338,7 +338,7 @@
               <input class="tree-check" type="checkbox" data-leaf="true" data-files="4" data-size="58.1" checked aria-label="Select The Batman (2022)">
               <svg class="tree-icon" width="16" height="16" aria-hidden="true"><use href="#i-folder"></use></svg>
               <span class="tree-name">The Batman (2022)</span>
-              <span class="tag tag-warn">1 conflict</span>
+              <span class="tag tag-bad">1 conflict</span>
               <span class="tree-files">4 files</span>
               <span class="tree-size mono">58.1 GB</span>
             </div>
@@ -359,7 +359,7 @@
               <button class="twisty" type="button" aria-expanded="true" aria-label="Collapse Extras">
                 <svg width="14" height="14" aria-hidden="true"><use href="#i-chevron"></use></svg>
               </button>
-              <input class="tree-check" type="checkbox" data-leaf="true" data-files="0" data-size="0" aria-label="Select Extras">
+              <input class="tree-check" type="checkbox" data-leaf="true" data-files="0" data-size="0" disabled aria-label="Extras has no media files">
               <svg class="tree-icon" width="16" height="16" aria-hidden="true"><use href="#i-folder"></use></svg>
               <span class="tree-name">Extras</span>
               <span class="tree-files">0 files</span>
@@ -525,9 +525,9 @@
             <td class="mono">#39</td>
             <td>T7_Media_02</td>
             <td>Movies</td>
-            <td class="num mono">8</td>
-            <td class="num mono">197.6 GB</td>
-            <td class="num mono">4m 08s</td>
+            <td class="num mono">6</td>
+            <td class="num mono">194.1 GB</td>
+            <td class="num mono">14m 04s</td>
             <td><span class="chip chip-warn">Completed with errors</span></td>
             <td class="mono">19:31</td>
             <td class="row-action"><button class="btn btn-quiet" type="button" data-drawer="run-39" aria-haspopup="dialog">Inspect</button></td>
@@ -583,7 +583,7 @@
         <h2 id="run-drawer-title">Run 39</h2>
         <span class="chip chip-warn">Completed with errors</span>
       </div>
-      <p class="drawer-sub">Movies, T7_Media_02. Started 19:27, finished 19:31.</p>
+      <p class="drawer-sub">Movies, T7_Media_02. Started 19:17, finished 19:31.</p>
     </div>
     <button class="icon-btn" type="button" data-close-drawer aria-label="Close run detail">
       <svg width="16" height="16" aria-hidden="true"><use href="#i-x"></use></svg>
@@ -593,16 +593,16 @@
     <dl class="meta-grid">
       <div><dt>Destination</dt><dd class="mono">/data/movies</dd></div>
       <div><dt>Mode</dt><dd>Review</dd></div>
-      <div><dt>Files</dt><dd class="mono">8</dd></div>
-      <div><dt>Size</dt><dd class="mono">197.6 GB</dd></div>
-      <div><dt>Copied</dt><dd class="mono">5 of 8 files, 124.6 GB</dd></div>
+      <div><dt>Files</dt><dd class="mono">6</dd></div>
+      <div><dt>Size</dt><dd class="mono">194.1 GB</dd></div>
+      <div><dt>Copied</dt><dd class="mono">3 of 6 files, 121.1 GB</dd></div>
       <div><dt>Issues</dt><dd>1 conflict, 1 failed, 1 skipped</dd></div>
     </dl>
     <div class="outcome">
-      <div class="outcome-strip" role="img" aria-label="Run outcome: 5 copied, 1 conflict, 1 failed, 1 skipped">
-        <span class="outcome-cell is-ok"></span><span class="outcome-cell is-ok"></span><span class="outcome-cell is-ok"></span><span class="outcome-cell is-ok"></span><span class="outcome-cell is-ok"></span><span class="outcome-cell is-conflict"></span><span class="outcome-cell is-failed"></span><span class="outcome-cell is-skipped"></span>
+      <div class="outcome-strip" role="img" aria-label="Run outcome: 3 copied, 1 conflict, 1 failed, 1 skipped">
+        <span class="outcome-cell is-ok"></span><span class="outcome-cell is-ok"></span><span class="outcome-cell is-ok"></span><span class="outcome-cell is-conflict"></span><span class="outcome-cell is-failed"></span><span class="outcome-cell is-skipped"></span>
       </div>
-      <p class="outcome-legend"><span class="dot dot-ok"></span>5 copied <span class="dot dot-bad"></span>1 conflict <span class="dot dot-bad"></span>1 failed <span class="dot dot-idle"></span>1 skipped</p>
+      <p class="outcome-legend"><span class="dot dot-ok"></span>3 copied <span class="dot dot-bad"></span>1 conflict <span class="dot dot-bad"></span>1 failed <span class="dot dot-idle"></span>1 skipped</p>
     </div>
     <h3 class="drawer-section-title">Files</h3>
     <ul class="file-list">
@@ -619,7 +619,7 @@
       <li class="file-item">
         <div class="file-line">
           <span class="file-path mono">The Batman (2022)/The.Batman.2022.2160p.mkv</span>
-          <span class="file-size mono">58.1 GB</span>
+          <span class="file-size mono">56.9 GB</span>
         </div>
         <div class="file-meta">
           <span class="chip chip-ok">Completed</span>
@@ -638,52 +638,32 @@
       </li>
       <li class="file-item">
         <div class="file-line">
+          <span class="file-path mono">The Batman (2022)/The.Batman.2022.srt</span>
+          <span class="file-size mono">148 KB</span>
+        </div>
+        <div class="file-meta">
+          <span class="chip chip-idle">Skipped</span>
+          <span class="file-detail">Already in library with the same size and mtime.</span>
+        </div>
+      </li>
+      <li class="file-item">
+        <div class="file-line">
+          <span class="file-path mono">The Batman (2022)/The.Batman.2022.nfo</span>
+          <span class="file-size mono">12 KB</span>
+        </div>
+        <div class="file-meta">
+          <span class="chip chip-ok">Completed</span>
+          <span class="file-detail">Wrote to <code>/data/movies/The Batman (2022)/The.Batman.2022.nfo</code>. SHA-256 2c81...9af0.</span>
+        </div>
+      </li>
+      <li class="file-item">
+        <div class="file-line">
           <span class="file-path mono">Dune Part Two (2024)/Dune.Part.Two.2024.2160p.mkv</span>
           <span class="file-size mono">71.8 GB</span>
         </div>
         <div class="file-meta">
           <span class="chip chip-bad">Failed</span>
           <span class="file-detail is-error">permission denied while writing the .part file</span>
-        </div>
-      </li>
-      <li class="file-item">
-        <div class="file-line">
-          <span class="file-path mono">Dune Part Two (2024)/Dune.Part.Two.2024.srt</span>
-          <span class="file-size mono">148 KB</span>
-        </div>
-        <div class="file-meta">
-          <span class="chip chip-ok">Completed</span>
-          <span class="file-detail">Wrote to <code>/data/movies/Dune Part Two (2024)/Dune.Part.Two.2024.srt</code>. SHA-256 7a10...e4b2.</span>
-        </div>
-      </li>
-      <li class="file-item">
-        <div class="file-line">
-          <span class="file-path mono">Dune Part Two (2024)/Dune.Part.Two.2024.nfo</span>
-          <span class="file-size mono">12 KB</span>
-        </div>
-        <div class="file-meta">
-          <span class="chip chip-ok">Completed</span>
-          <span class="file-detail">Wrote to <code>/data/movies/Dune Part Two (2024)/Dune.Part.Two.2024.nfo</code>. SHA-256 2c81...9af0.</span>
-        </div>
-      </li>
-      <li class="file-item">
-        <div class="file-line">
-          <span class="file-path mono">Dune Part Two (2024)/poster.jpg</span>
-          <span class="file-size mono">2.1 MB</span>
-        </div>
-        <div class="file-meta">
-          <span class="chip chip-ok">Completed</span>
-          <span class="file-detail">Wrote to <code>/data/movies/Dune Part Two (2024)/poster.jpg</code>. SHA-256 88de...b701.</span>
-        </div>
-      </li>
-      <li class="file-item">
-        <div class="file-line">
-          <span class="file-path mono">Dune Part Two (2024)/sample.mkv</span>
-          <span class="file-size mono">86 MB</span>
-        </div>
-        <div class="file-meta">
-          <span class="chip chip-idle">Skipped</span>
-          <span class="file-detail">Already in library with the same size and mtime.</span>
         </div>
       </li>
     </ul>
@@ -729,27 +709,27 @@
     var files = 0;
     var size = 0;
     leaves.forEach(function (box) {
-      if (!box.checked) {
+      if (!box.checked || box.disabled || Number(box.dataset.files) === 0) {
         return;
       }
       selected += 1;
       files += Number(box.dataset.files);
       size += Number(box.dataset.size);
     });
-    if (selected === 0) {
-      summary.textContent = "Nothing selected";
+    if (files === 0) {
+      summary.textContent = "Nothing to import";
     } else {
       var folders = selected === 1 ? "1 folder" : selected + " folders";
       var filesLabel = files === 1 ? "1 file" : files + " files";
       summary.textContent = folders + ", " + filesLabel + ", " + size.toFixed(1) + " GB";
     }
-    startButton.disabled = selected === 0;
+    startButton.disabled = files === 0;
   }
 
   function syncParents() {
     document.querySelectorAll('.tree-check[data-parent="true"]').forEach(function (parentBox) {
       var group = parentBox.closest("li");
-      var leaves = group.querySelectorAll('.tree-check[data-leaf="true"]');
+      var leaves = group.querySelectorAll('.tree-check[data-leaf="true"]:not(:disabled)');
       var checked = 0;
       leaves.forEach(function (box) {
         if (box.checked) {
@@ -765,7 +745,7 @@
     box.addEventListener("change", function () {
       if (box.dataset.parent === "true") {
         var group = box.closest("li");
-        group.querySelectorAll('.tree-check[data-leaf="true"]').forEach(function (childBox) {
+        group.querySelectorAll('.tree-check[data-leaf="true"]:not(:disabled)').forEach(function (childBox) {
           childBox.checked = box.checked;
           childBox.indeterminate = false;
         });
