@@ -67,10 +67,12 @@ def scan_inventory(
 ) -> InventoryStats:
     """Scan ``root`` into ``inventory_entries`` and return the totals.
 
-    Per-entry failures (unreadable directories, unreadable entries, symlinks,
-    undecodable names) are counted in ``InventoryStats.errors`` and skipped so
-    one bad entry cannot abort the whole scan. A failure to scan at all marks
-    the inventory ``failed`` and is re-raised.
+    A scan replaces any entries already recorded for the inventory, so
+    re-scanning after a failure starts from a clean slate. Per-entry failures
+    (unreadable directories, unreadable entries, symlinks, undecodable names)
+    are counted in ``InventoryStats.errors`` and skipped so one bad entry
+    cannot abort the whole scan. A failure to scan the root at all marks the
+    inventory ``failed`` and is re-raised.
     """
     if (
         conn.execute("SELECT 1 FROM inventories WHERE id=?", (inventory_id,)).fetchone()
@@ -78,6 +80,7 @@ def scan_inventory(
     ):
         raise ValueError(f"unknown inventory: {inventory_id}")
 
+    conn.execute("DELETE FROM inventory_entries WHERE inventory_id=?", (inventory_id,))
     conn.execute(
         f"UPDATE inventories SET status='scanning', started_at={_NOW}, "
         "finished_at=NULL, error=NULL WHERE id=?",
@@ -144,6 +147,8 @@ def _scan(
 ) -> InventoryStats:
     if not root.is_dir():
         raise NotADirectoryError(f"not a directory: {root}")
+    with os.scandir(root):
+        pass
 
     files = 0
     dirs = 0
@@ -151,9 +156,12 @@ def _scan(
     files_seen = 0
     bytes_seen = 0
     errors = 0
+    root_path = os.fspath(root)
 
-    def _on_error(_exc: OSError) -> None:
+    def _on_error(exc: OSError) -> None:
         nonlocal errors
+        if exc.filename == root_path:
+            raise exc
         errors += 1
 
     walker = os.walk(root, topdown=True, onerror=_on_error, followlinks=False)

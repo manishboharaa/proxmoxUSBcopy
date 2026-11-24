@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 from dataclasses import FrozenInstanceError, fields
 
@@ -251,6 +252,48 @@ def test_missing_root_marks_inventory_failed(conn, tmp_path):
     assert row["status"] == "failed"
     assert row["error"]
     assert row["finished_at"]
+
+
+def test_unreadable_root_marks_inventory_failed(conn, sample_tree, monkeypatch):
+    inv = create_inventory(conn, 1, str(sample_tree))
+    sample_tree.chmod(0o000)
+    try:
+        if os.access(sample_tree, os.R_OK):
+
+            def _deny(path):
+                raise PermissionError(errno.EACCES, "Permission denied", str(path))
+
+            monkeypatch.setattr(os, "scandir", _deny)
+        with pytest.raises(OSError):
+            scan_inventory(conn, inv, sample_tree)
+    finally:
+        sample_tree.chmod(0o755)
+    row = _row(conn, inv)
+    assert row["status"] == "failed"
+    assert row["error"]
+    assert row["finished_at"]
+
+
+def test_rescan_same_inventory_replaces_entries(conn, sample_tree):
+    inv = create_inventory(conn, 1, str(sample_tree))
+    first = scan_inventory(conn, inv, sample_tree)
+    assert first.files == 3 and first.errors == 0
+
+    (sample_tree / "notes.txt").unlink()
+    (sample_tree / "Movies" / "Heat (1995)" / "Featurette.mkv").write_bytes(b"zz")
+
+    second = scan_inventory(conn, inv, sample_tree)
+    assert second.files == 3 and second.bytes_total == 6
+    assert second.errors == 0
+    assert get_entry(conn, inv, "notes.txt") is None
+    assert get_entry(conn, inv, "Movies/Heat (1995)/Featurette.mkv") is not None
+    total = conn.execute(
+        "SELECT count(*) FROM inventory_entries WHERE inventory_id=?", (inv,)
+    ).fetchone()[0]
+    assert total == 8
+    row = _row(conn, inv)
+    assert row["status"] == "complete"
+    assert row["total_files"] == 3 and row["total_bytes"] == 6
 
 
 def test_unknown_inventory_raises(conn, sample_tree):
