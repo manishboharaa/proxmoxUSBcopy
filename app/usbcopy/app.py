@@ -19,6 +19,7 @@ from usbcopy.auth import SessionManager
 from usbcopy.config import Config
 from usbcopy.db import init_db, open_db
 from usbcopy.events import (
+    DriveEvent,
     EventError,
     EventSpoolWatcher,
     apply_event,
@@ -135,6 +136,7 @@ class _LiveEventHandler:
         self._enqueue_run = enqueue_run
         self._lock = threading.Lock()
         self._inflight: set[int] = set()
+        self._file_lock = threading.Lock()
 
     def dispatch(self, path: Path) -> None:
         try:
@@ -148,25 +150,47 @@ class _LiveEventHandler:
         except Exception:
             logger.exception("could not dispatch spool event %s", path)
 
+    def drain(
+        self,
+        conn: sqlite3.Connection,
+        spool_dir: Path,
+        on_drive_added: Callable[[int, Path], None] | None = None,
+    ) -> int:
+        """Drain pending spool files under the shared file lock."""
+        with self._file_lock:
+            return process_pending(conn, spool_dir, on_drive_added)
+
     def handle(self, path: Path) -> None:
         conn = open_db(self._config.db_path)
         try:
-            if not path.exists():
+            event, drive_id = self._apply_file(conn, path)
+            if event is None:
                 return
-            try:
-                event = parse_event(path)
-            except EventError as exc:
-                logger.warning("ignoring malformed spool event %s: %s", path, exc)
-                return
-            apply_event(conn, event, self._drive_added(conn))
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
+            if event.action == "add":
+                self._drive_added(conn)(drive_id, Path(event.mountpoint))
         except Exception:
             logger.exception("could not process spool event %s", path)
         finally:
             conn.close()
+
+    def _apply_file(
+        self, conn: sqlite3.Connection, path: Path
+    ) -> tuple[DriveEvent | None, int]:
+        """Parse, apply, and delete one spool file while holding the file lock."""
+        with self._file_lock:
+            if not path.exists():
+                return None, 0
+            try:
+                event = parse_event(path)
+            except EventError as exc:
+                logger.warning("ignoring malformed spool event %s: %s", path, exc)
+                return None, 0
+            drive_id = apply_event(conn, event)
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            return event, drive_id
 
     def _drive_added(
         self, conn: sqlite3.Connection
@@ -233,14 +257,27 @@ def create_app(
             init_db(conn)
             if start_background:
                 assert worker is not None
-                startup_recovery(conn, config, enqueue_run=worker.enqueue)
-                worker.start()
-                watcher = EventSpoolWatcher(
-                    config.events_dir,
-                    _LiveEventHandler(config, worker.enqueue).dispatch,
+                stats = startup_recovery(
+                    conn, config, enqueue_run=worker.enqueue
                 )
+                worker.start()
+                handler = _LiveEventHandler(config, worker.enqueue)
+                watcher = EventSpoolWatcher(config.events_dir, handler.dispatch)
                 app.state.watcher = watcher
                 watcher.start()
+                late = handler.drain(
+                    conn,
+                    config.events_dir,
+                    _startup_drive_added(conn, config, worker.enqueue),
+                )
+                if late:
+                    stats["events"] += late
+                    logger.info(
+                        "processed %s event(s) written during startup recovery",
+                        late,
+                    )
+                app.state.startup_stats = stats
+                logger.info("startup recovery complete: %s", stats)
         except BaseException:
             if watcher is not None:
                 watcher.stop()
@@ -273,6 +310,7 @@ def create_app(
     app.state.enqueue_run = api_enqueue
     app.state.worker = worker
     app.state.watcher = None
+    app.state.startup_stats = None
     app.state.templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
     app.mount(
         "/static",

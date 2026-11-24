@@ -221,6 +221,39 @@ def test_startup_scans_drive_once_when_event_and_mount_duplicate(
     assert count(conn, "SELECT count(*) FROM inventories") == 1
 
 
+def test_event_written_during_recovery_is_processed_before_startup_completes(
+    conn, config: Config, monkeypatch, tmp_path: Path
+):
+    config.events_dir.mkdir(parents=True)
+    mountpoint = tmp_path / "late-mount" / "ABCD-1234"
+    mountpoint.mkdir(parents=True)
+    (mountpoint / "movie.mkv").write_bytes(b"hi")
+    real_scan_mounted = app_module.scan_mounted
+
+    def scan_mounted_then_write(*args, **kwargs):
+        found = real_scan_mounted(*args, **kwargs)
+        write_event(
+            config.events_dir,
+            uuid="ABCD-1234",
+            mountpoint=mountpoint,
+            name="late.json",
+        )
+        return found
+
+    monkeypatch.setattr(app_module, "scan_mounted", scan_mounted_then_write)
+    app = create_app(config)
+
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        row = conn.execute(
+            "SELECT present FROM drives WHERE uuid = 'ABCD-1234'"
+        ).fetchone()
+        assert row is not None and row[0] == 1
+        assert count(conn, "SELECT count(*) FROM inventories") == 1
+        assert app.state.startup_stats["events"] >= 1
+        assert list(config.events_dir.glob("*.json")) == []
+
+
 # ---------------------------------------------------------------------------
 # EventSpoolWatcher miss tolerance
 # ---------------------------------------------------------------------------
@@ -266,6 +299,31 @@ def test_live_handler_ignores_malformed_event(config: Config, caplog):
 
     assert bad.exists() is True
     assert "malformed" in caplog.text
+
+
+def test_live_handlers_apply_same_file_once(conn, config: Config, tmp_path: Path):
+    mountpoint = tmp_path / "shared-mount" / "ABCD-1234"
+    mountpoint.mkdir(parents=True)
+    (mountpoint / "movie.mkv").write_bytes(b"hi")
+    path = write_event(config.events_dir, uuid="ABCD-1234", mountpoint=mountpoint)
+    handler = app_module._LiveEventHandler(config, None)
+    barrier = threading.Barrier(2)
+
+    def run() -> None:
+        barrier.wait(timeout=5)
+        handler.handle(path)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert path.exists() is False
+    assert (
+        count(conn, "SELECT count(*) FROM events WHERE action = 'add'") == 1
+    )
+    assert count(conn, "SELECT count(*) FROM inventories") == 1
 
 
 def test_live_drive_added_dedupes_concurrent_scans(
