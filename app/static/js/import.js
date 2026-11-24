@@ -560,7 +560,7 @@
     list.textContent = "";
   }
 
-  function appendEntries(list, offset, body) {
+  function appendEntries(list, parent, offset, body) {
     if (offset === 0) {
       clearList(list);
     }
@@ -620,7 +620,7 @@
               : result.body.detail || "Could not load the drive tree.";
           throw new Error(message);
         }
-        appendEntries(list, append ? offset : 0, result.body);
+        appendEntries(list, parent, append ? offset : 0, result.body);
         return result.body;
       });
   }
