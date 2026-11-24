@@ -1,16 +1,19 @@
-"""Read-only JSON API and SSE progress stream for the usbcopy dashboard.
+"""JSON API and SSE progress stream for the usbcopy dashboard.
 
-Every read endpoint requires the signed session cookie. Login is public, and
-logout is public and idempotent (it only expires the cookie). No route changes
-configuration, starts work, or touches the filesystem.
+Every endpoint except login and logout requires the signed session cookie.
+``POST /api/imports`` is the only route that starts work: it validates the
+selection against the inventory, creates a review run, writes an import audit
+row, and hands the run id to the injected worker. No route changes
+configuration, deletes data, or touches the filesystem.
 """
 
 import json
 import logging
 import secrets
+import shutil
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -20,9 +23,11 @@ from passlib.exc import UnknownHashError
 from starlette.concurrency import run_in_threadpool
 
 from usbcopy import __version__
-from usbcopy.auth import SessionManager, verify_password
+from usbcopy.auth import Session, SessionManager, verify_password
 from usbcopy.config import Config
 from usbcopy.db import open_db
+from usbcopy.planner import PlanError, build_run_plan
+from usbcopy.runs import create_run
 from usbcopy.web import (
     build_require_session,
     clear_session_cookie,
@@ -87,9 +92,20 @@ def run_event_stream(
         time.sleep(poll_interval)
 
 
-def build_api_router(config: Config, session_manager: SessionManager) -> APIRouter:
-    """Build the ``/api`` router, public login plus session-protected routes."""
+def build_api_router(
+    config: Config,
+    session_manager: SessionManager,
+    *,
+    enqueue_run: Callable[[int], None] | None = None,
+) -> APIRouter:
+    """Build the ``/api`` router, public login plus session-protected routes.
+
+    ``enqueue_run`` receives the id of each newly committed import run. The
+    default is a warning-only no-op so the app can run without a worker (for
+    example in tests or before Task 13 wires ``RunWorker.enqueue``).
+    """
     require_session = build_require_session(session_manager)
+    enqueue = enqueue_run if enqueue_run is not None else _warn_unhandled_enqueue
 
     def get_conn() -> Iterator[sqlite3.Connection]:
         conn = open_db(config.db_path)
@@ -133,6 +149,111 @@ def build_api_router(config: Config, session_manager: SessionManager) -> APIRout
     def logout(request: Request, response: Response) -> dict[str, bool]:
         clear_session_cookie(response, secure=request.url.scheme == "https")
         return {"ok": True}
+
+    @protected.post("/imports", status_code=status.HTTP_201_CREATED)
+    def create_import(
+        payload: Annotated[dict[str, Any], Depends(_request_object)],
+        conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+        session: Annotated[Session, Depends(require_session)],
+    ) -> dict[str, int]:
+        if not _csrf_matches(payload.get("csrf"), session.csrf):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="invalid CSRF token",
+            )
+
+        inventory_id = payload.get("inventory_id")
+        if isinstance(inventory_id, bool) or not isinstance(inventory_id, int):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="inventory_id must be an integer",
+            )
+        inventory = conn.execute(
+            "SELECT drive_id, status FROM inventories WHERE id = ?",
+            (inventory_id,),
+        ).fetchone()
+        if inventory is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"unknown inventory: {inventory_id}",
+            )
+        if inventory["status"] != "complete":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"inventory {inventory_id} is not complete: "
+                    f"{inventory['status']}"
+                ),
+            )
+
+        destination_key = payload.get("destination")
+        destination = (
+            config.destinations.get(destination_key)
+            if isinstance(destination_key, str)
+            else None
+        )
+        if destination is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"unknown destination: {destination_key!r}",
+            )
+
+        raw_paths = payload.get("paths")
+        if (
+            not isinstance(raw_paths, list)
+            or not raw_paths
+            or any(not isinstance(path, str) for path in raw_paths)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="paths must be a non-empty list of strings",
+            )
+
+        try:
+            free_bytes = shutil.disk_usage(destination.path).free
+            plan = build_run_plan(
+                conn,
+                inventory_id,
+                list(raw_paths),
+                destination.path,
+                free_bytes,
+            )
+        except PlanError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"destination unavailable: {exc}",
+            ) from exc
+
+        run_id = create_run(
+            conn,
+            int(inventory["drive_id"]),
+            inventory_id,
+            destination.key,
+            "review",
+            plan,
+        )
+        detail = json.dumps(
+            {
+                "destination": destination.key,
+                "files": len(plan.items),
+                "bytes": plan.total_bytes,
+            },
+            sort_keys=True,
+        )
+        conn.execute(
+            "INSERT INTO audit (actor, action, detail_json) "
+            "VALUES (?, 'import_start', ?)",
+            (session.username, detail),
+        )
+        conn.commit()
+
+        enqueue(run_id)
+        return {"run_id": run_id}
 
     @protected.get("/status")
     def read_status(
@@ -327,6 +448,41 @@ def _record_login_audit(config: Config, request: Request) -> None:
             conn.close()
     except (OSError, sqlite3.Error) as exc:
         logger.warning("could not record login audit: %s", exc)
+
+
+def _warn_unhandled_enqueue(run_id: int) -> None:
+    """Placeholder enqueue used when no copy worker is attached."""
+    logger.warning(
+        "run %s was created but no worker is attached; it will stay queued",
+        run_id,
+    )
+
+
+def _csrf_matches(supplied: object, expected: str) -> bool:
+    """Compare the body CSRF token with the session token in constant time."""
+    if not isinstance(supplied, str):
+        return False
+    return secrets.compare_digest(
+        supplied.encode("utf-8", "surrogatepass"),
+        expected.encode("utf-8", "surrogatepass"),
+    )
+
+
+async def _request_object(request: Request) -> dict[str, Any]:
+    """Parse a JSON object body, rejecting anything else as invalid input."""
+    try:
+        payload = json.loads(await request.body())
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="request body must be a JSON object",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="request body must be a JSON object",
+        )
+    return payload
 
 
 def _password_matches(password: str, password_hash: str) -> bool:
