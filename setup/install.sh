@@ -1,19 +1,152 @@
 #!/usr/bin/env bash
 # proxmoxUSBcopy installer.
 #
-# Task 19 scope: read-only preflight, the DESIGN 11.5 prompt flow, and a
-# complete --dry-run plan. Real installation steps arrive in Task 20.
+# Checkout mode runs from setup/install.sh. Pipe mode (`curl ... | bash`)
+# downloads the repository archive into a temp dir and re-execs that checkout.
 set -euo pipefail
-
-# Task 19 is checkout-only. The self-contained curl|bash bootstrap belongs to
-# Task 20; fail with an actionable message instead of a source-path error.
-if [[ -z ${BASH_SOURCE[0]:-} || ! -f ${BASH_SOURCE[0]} ]]; then
-    printf 'install.sh: error: run this installer from a repository checkout (setup/install.sh); curl | bash is not supported by this build\n' >&2
-    exit 1
-fi
 
 REPO_URL="https://github.com/OWNER/proxmoxUSBcopy"
 REPO_REF="main"
+
+bootstrap_usage() {
+    cat <<'EOF'
+Usage: install.sh [options]
+
+Install proxmoxUSBcopy on a Proxmox VE host.
+
+  --repo-url URL   Repository to download when run from a pipe
+  --ref REF        Branch, tag, or commit to install (default: main)
+  --dry-run        Print the plan without changing the host
+  --yes            Accept defaults
+  --uninstall      Run setup/uninstall.sh
+  -h, --help       Show this help
+
+Piped installs need an https:// repository URL (no embedded credentials).
+EOF
+}
+
+bootstrap_from_pipe() {
+    local -a original=("$@")
+    local repo_url=$REPO_URL
+    local ref=$REPO_REF
+    local rest=''
+    local authority=''
+    local archive_url=''
+    local tmp_dir=''
+    local archive=''
+    local checkout=''
+    local status=0
+
+    while (($# > 0)); do
+        case "$1" in
+            --repo-url)
+                (($# >= 2)) || {
+                    printf 'install.sh: error: --repo-url requires a value\n' >&2
+                    exit 1
+                }
+                repo_url=$2
+                shift 2
+                ;;
+            --repo-url=*)
+                repo_url=${1#*=}
+                shift
+                ;;
+            --ref)
+                (($# >= 2)) || {
+                    printf 'install.sh: error: --ref requires a value\n' >&2
+                    exit 1
+                }
+                ref=$2
+                shift 2
+                ;;
+            --ref=*)
+                ref=${1#*=}
+                shift
+                ;;
+            -h | --help)
+                bootstrap_usage
+                exit 0
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    case "$repo_url" in
+        http://* | https://*) ;;
+        *)
+            printf 'install.sh: error: piped installs require an https:// repository URL; use a checkout for ssh/git URLs\n' >&2
+            exit 1
+            ;;
+    esac
+    [[ $repo_url != -* ]] || {
+        printf 'install.sh: error: repository URL must not start with a dash\n' >&2
+        exit 1
+    }
+    [[ $repo_url != *' '* && $repo_url != *$'\n'* && $repo_url != *$'\r'* && $repo_url != *$'\t'* ]] || {
+        printf 'install.sh: error: repository URL contains whitespace or control characters\n' >&2
+        exit 1
+    }
+    rest=${repo_url#*://}
+    authority=${rest%%/*}
+    [[ -n $authority && $rest == */* ]] || {
+        printf 'install.sh: error: repository URL must include a host and repository path\n' >&2
+        exit 1
+    }
+    if [[ $authority == *@* ]]; then
+        printf 'install.sh: error: repository URL must not embed credentials (user:token@host)\n' >&2
+        exit 1
+    fi
+    case "$repo_url" in
+        */OWNER/* | */OWNER | */OWNER.git)
+            printf 'install.sh: error: repository URL still contains the OWNER placeholder; pass --repo-url\n' >&2
+            exit 1
+            ;;
+    esac
+    [[ -n $ref ]] || {
+        printf 'install.sh: error: --ref must not be empty\n' >&2
+        exit 1
+    }
+    [[ $ref =~ ^[A-Za-z0-9._/-]+$ && $ref != *'..'* && $ref != -* ]] || {
+        printf 'install.sh: error: --ref contains unsupported characters\n' >&2
+        exit 1
+    }
+
+    archive_url="${repo_url%.git}/archive/${ref}.tar.gz"
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/usbcopy-bootstrap.XXXXXX") || {
+        printf 'install.sh: error: could not create a temporary directory\n' >&2
+        exit 1
+    }
+    archive="$tmp_dir/repo.tar.gz"
+    if ! curl -fsSL --max-time 300 -o "$archive" "$archive_url"; then
+        rm -rf -- "$tmp_dir"
+        printf 'install.sh: error: could not download the repository archive; check network access, --repo-url, and --ref\n' >&2
+        exit 1
+    fi
+    if ! tar -xzf "$archive" -C "$tmp_dir"; then
+        rm -rf -- "$tmp_dir"
+        printf 'install.sh: error: could not extract the repository archive\n' >&2
+        exit 1
+    fi
+    checkout=$(find "$tmp_dir" -maxdepth 4 -type f -path '*/setup/install.sh' -print -quit)
+    if [[ -z $checkout ]]; then
+        rm -rf -- "$tmp_dir"
+        printf 'install.sh: error: the repository archive does not contain setup/install.sh\n' >&2
+        exit 1
+    fi
+    if bash "$checkout" "${original[@]}"; then
+        status=0
+    else
+        status=$?
+    fi
+    rm -rf -- "$tmp_dir"
+    exit "$status"
+}
+
+if [[ -z ${BASH_SOURCE[0]:-} || ! -f ${BASH_SOURCE[0]} ]]; then
+    bootstrap_from_pipe "$@"
+fi
 
 PROG=${0##*/}
 SCRIPT_SOURCE=${BASH_SOURCE[0]}
@@ -36,6 +169,14 @@ source "$LIB_DIR/common.sh"
 source "$LIB_DIR/preflight.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/prompts.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/ct.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/app.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/host.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/manifest.sh"
 
 usage() {
     cat <<EOF
@@ -149,6 +290,18 @@ validate_install_source() {
     if [[ $REPO_URL == *'/OWNER/'* ]]; then
         warn "REPO_URL still contains the OWNER placeholder; pass --repo-url before a real install"
     fi
+}
+
+print_install_result() {
+    log "installation complete"
+    log "dashboard: http://${CT_IP:-<ct-ip>}:$PORT (username admin)"
+    if ((ADMIN_PASSWORD_GENERATED == 1)); then
+        printf 'Admin password: %s\n' "$ADMIN_PASSWORD"
+    else
+        log "admin password: the value supplied during install"
+    fi
+    log "logs: pct exec $CT_ID -- journalctl -u usbcopy.service -f"
+    log "uninstall: $SCRIPT_DIR/uninstall.sh"
 }
 
 print_plan() {
@@ -268,7 +421,13 @@ main() {
         exit 0
     fi
 
-    die "real installation is not implemented in this build; re-run with --dry-run"
+    manifest_check_absent
+    create_ct
+    install_app
+    configure_host
+    verify_permissions
+    write_manifest
+    print_install_result
 }
 
 main "$@"

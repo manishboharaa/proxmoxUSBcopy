@@ -367,8 +367,8 @@ fi
 # shellcheck disable=SC2002
 out=$(cat "$INSTALL" | bash 2>&1) && status=0 || status=$?
 ((status != 0)) || fail "piped installer unexpectedly succeeded"
-assert_contains 'run this installer from a repository checkout' "$out"
+assert_contains 'OWNER placeholder' "$out"
 assert_not_contains 'unbound variable' "$out"
-pass "curl | bash fails clearly instead of crashing under set -u"
+pass "curl | bash rejects the OWNER placeholder instead of crashing under set -u"
 
 printf '\nAll installer dry-run tests passed.\n'

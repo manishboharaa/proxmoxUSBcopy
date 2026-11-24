@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Fake tar for installer tests: log, then delegate to the real tar.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'tar %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi
+
+exec "${REAL_TAR:?REAL_TAR must point to the real tar binary}" "$@"

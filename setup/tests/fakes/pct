@@ -1,19 +1,127 @@
 #!/usr/bin/env bash
-# Fake pct for installer tests. Read-only output for dry-runs; every call is
-# logged so tests can prove no mutating subcommand ran.
+# Fake pct for installer tests.
+#
+# Read-only output for dry-runs; mutating calls are logged so tests can prove
+# what the installer would do. `exec` emulates the few command results the
+# installer consumes without touching a real container.
 set -euo pipefail
 
-if [[ -n ${USBC_FAKE_LOG:-} ]]; then
-    printf 'pct %s\n' "$*" >>"$USBC_FAKE_LOG"
-fi
+log() {
+    if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+        printf '%s\n' "$*" >>"$USBC_FAKE_LOG"
+    fi
+}
 
-case "${1:-}" in
+log "pct $*"
+
+command=${1:-}
+case "$command" in
     list)
         printf 'VMID       Status     Lock         Name\n'
         printf '100        stopped                 legacy-ct\n'
         ;;
-    status)
-        printf 'status: running\n'
+    create | start | stop | status | push)
+        if [[ $command == push && -n ${USBC_FAKE_PUSH_DIR:-} ]]; then
+            # pct push <vmid> <source> <destination>
+            src=${3:-}
+            dest=${4:-}
+            if [[ -n $src && -n $dest && -f $src ]]; then
+                mkdir -p -- "$USBC_FAKE_PUSH_DIR"
+                cp -- "$src" "$USBC_FAKE_PUSH_DIR/${dest##*/}"
+            fi
+        fi
+        ;;
+    set)
+        shift
+        (($# > 0)) && shift
+        while (($# > 0)); do
+            option=$1
+            value=${2:-}
+            case "$option" in
+                -mp[0-9]*)
+                    slot=${option#-}
+                    log "$slot: $value"
+                    if [[ -n ${USBC_FAKE_PCT_SET_RO_FAIL:-} && $value == *,ro=1 ]]; then
+                        exit 1
+                    fi
+                    shift 2
+                    ;;
+                *)
+                    shift
+                    ;;
+            esac
+        done
+        ;;
+    exec)
+        shift
+        (($# > 0)) && shift
+        [[ ${1:-} == -- ]] && shift
+        joined="$*"
+        last=''
+        for arg in "$@"; do
+            last=$arg
+        done
+        if [[ $joined == *'.usbcopy-permission-test'* ]]; then
+            log 'verify_permissions'
+        fi
+        case "$joined" in
+            *'id -u usbcopy'*)
+                if [[ ${USBC_FAKE_USER_ABSENT:-0} == 1 \
+                    && ! -e ${USBC_FAKE_STATE_DIR:-/nonexistent}/user-created ]]; then
+                    exit 1
+                fi
+                printf '%s\n' "${USBC_FAKE_USBCOPY_UID:-999}"
+                ;;
+            *'id -g usbcopy'*)
+                printf '%s\n' "${USBC_FAKE_USBCOPY_GID:-999}"
+                ;;
+            *'useradd '*)
+                mkdir -p -- "${USBC_FAKE_STATE_DIR:-/nonexistent}"
+                : >"${USBC_FAKE_STATE_DIR:-/nonexistent}/user-created"
+                ;;
+            *'dpkg -s '*)
+                if [[ " ${USBC_FAKE_PRESENT_PACKAGES:-} " == *" $last "* ]]; then
+                    exit 0
+                fi
+                exit 1
+                ;;
+            *'hash_password'*)
+                cat >/dev/null
+                if [[ -n ${USBC_FAKE_HASH_FAIL:-} ]]; then
+                    exit 1
+                fi
+                printf '%s\n' "${USBC_FAKE_BCRYPT_HASH:-\$2b\$12\$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789}"
+                ;;
+            *'socket'*)
+                port=$last
+                if [[ " ${USBC_FAKE_BUSY_PORTS:-} " == *" $port "* ]]; then
+                    exit 1
+                fi
+                ;;
+            *'systemctl is-active'*)
+                exit 0
+                ;;
+            *'curl '*)
+                printf '{"status":"ok"}\n'
+                ;;
+            *'hostname -I'*)
+                printf '%s\n' "${USBC_FAKE_CT_IP:-10.0.0.50}"
+                ;;
+            *'ls -A /mnt/usb'*)
+                if [[ -n ${USBC_FAKE_USB_ENTRY:-} ]]; then
+                    printf '%s\n' "$USBC_FAKE_USB_ENTRY"
+                fi
+                ;;
+            *'runuser'*)
+                if [[ -n ${USBC_FAKE_VERIFY_FAIL_DEST:-} \
+                    && $joined == *"${USBC_FAKE_VERIFY_FAIL_DEST}"* \
+                    && $joined == *'.usbcopy-permission-test'* ]]; then
+                    exit 1
+                fi
+                ;;
+            *)
+                ;;
+        esac
         ;;
     *)
         ;;

@@ -291,6 +291,13 @@ generate_password() {
     printf '%s' "$value"
 }
 
+destination_extra_key() {
+    local base=${DEST_EXTRA##*/}
+    local key=${base,,}
+    key=${key//[^a-z0-9_]/_}
+    printf '%s' "$key"
+}
+
 is_port_free() {
     local port=$1
     if command -v -- ss >/dev/null 2>&1; then

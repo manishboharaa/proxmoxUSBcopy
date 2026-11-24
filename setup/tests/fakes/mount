@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake mount for installer tests: log only, never change propagation.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'mount %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi

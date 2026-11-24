@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake udevadm for installer tests: log only.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'udevadm %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake chown for installer tests: log only, never touch ownership.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'chown %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi
