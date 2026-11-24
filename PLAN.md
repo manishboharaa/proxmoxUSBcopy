@@ -18,7 +18,7 @@
 - The dashboard is read-only except the Import page (select + start) and login. No settings editor, delete, retry, scan, or shell endpoints.
 - Preserve names and relative structure exactly. Selecting a folder copies its contents, not the folder itself. No drive-label wrapper.
 - Skip identical files; skip conflicts; never overwrite an existing destination file in v1.
-- Copy via `.usbcopy.<random>.part` in the destination directory, fsync, verify SHA-256 (default on), atomic `os.replace`, preserve mtime. No partial file may ever carry its final name.
+- Copy via `.usbcopy.<random>.part` in the destination directory, fsync, verify SHA-256 (default on), atomic no-clobber publish (`os.link` + unlink temp), preserve mtime. No partial file may ever carry its final name.
 - Jobs run one at a time. Progress writes to SQLite at most once per second plus item transitions.
 - All dashboard assets are local (no CDN, no external fonts). Embedded woff2, integer font sizes, no fractional text transforms.
 - App runs as `usbcopy` in an unprivileged CT. Config at `/etc/usbcopy/config.toml` (`0640 root:usbcopy`); DB at `/var/lib/usbcopy/usbcopy.db`.
@@ -533,7 +533,7 @@ def test_large_file_streams_in_chunks(src, dst):
 
 - [ ] **Step 3: Implement**
 
-Open source `rb` only. Create temp in `destination.parent` named `.usbcopy.<uuid4().hex>.part` with `O_CREAT|O_EXCL`. Stream chunks; compute source SHA-256. `flush`+`os.fsync`; if verifying, hash the temp file; on mismatch raise `CopyError("hash mismatch")`. `os.replace(temp, destination)`; `fsync` directory; set mtime with `os.utime`; chmod `0o644`. Any exception: unlink temp and re-raise. Refuse existing destination.
+Open source `rb` only. Create temp in `destination.parent` named `.usbcopy.<uuid4().hex>.part` with `O_CREAT|O_EXCL`. Stream chunks; compute source SHA-256. `flush`+`os.fsync`; if verifying, hash the temp file; on mismatch raise `CopyError("hash mismatch")`. Set mtime/mode on the temp, then publish with `os.link(temp, destination)` (fails if the target exists) and unlink the temp; `fsync` the directory (log a warning if it fails). Any exception: unlink temp and re-raise. Refuse existing destination.
 
 - [ ] **Step 4: Pass** — PASS. **Step 5: Checkpoint.**
 

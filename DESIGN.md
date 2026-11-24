@@ -75,7 +75,7 @@ It is meant to be published as an open-source project: one command to install, n
 
 **R9 — Duplicates.** If the target path already exists with the same size and mtime, the file is marked "already copied" and skipped. If it exists with different size/mtime, it is marked "conflict" and skipped by default (no silent overwrite). The run report shows both.
 
-**R10 — Copy mechanics.** Recursive copy to a temporary `.part` file in the destination directory, fsync, then atomic rename to the final name. Preserve file mtime; write files `0644` and directories `0755`. Verify SHA-256 after copy by default (configurable). Check free space before starting. Three attempts per file with backoff; one failure does not stop the run. Jobs run one at a time.
+**R10 — Copy mechanics.** Recursive copy to a temporary `.part` file in the destination directory, fsync, verify, then atomic no-clobber publish (hard-link the temp into place, then remove the temp). Preserve file mtime; write files `0644` and directories `0755`. Verify SHA-256 after copy by default (configurable). Check free space before starting. Three attempts per file with backoff; one failure does not stop the run. Jobs run one at a time.
 
 **R11 — History.** SQLite stores drives, inventories, runs, every file (source path, size, hash, destination path, status, timing), and events. Retention is forever by default; records remain after files are deleted from the source or destination. Absent drives/files are labelled "not present".
 
@@ -186,7 +186,7 @@ Modules:
 - `inventory.py` — metadata-only scan of a drive (or configured subfolder), skipping system dirs; stores dirs/files; progress updates; media classification hints.
 - `media.py` — extension list and TV/movie name heuristics (suggestions only).
 - `planner.py` — turns a validated selection + destination into run items; duplicate/conflict flags; free-space check.
-- `copier.py` — single worker; temp file, chunked copy, hash, fsync, atomic rename, mtime; retries; cancellation on drive removal.
+- `copier.py` — single worker; temp file, chunked copy, hash, fsync, atomic no-clobber publish, mtime; retries; cancellation on drive removal.
 - `jobs.py` — in-process queue; serialised execution; run lifecycle.
 - `api.py` — JSON endpoints + SSE.
 - `web.py` — Jinja2 routes, auth, CSRF.
@@ -302,7 +302,7 @@ Indexes on run status, drive presence, inventory entries by parent, run_items by
 - No drive-label wrapper: files land directly in the chosen Movies/Series tree so Jellyfin sees the expected layout. Collisions are caught by the duplicate/conflict rules below.
 - Pre-flight: destination writable, free space ≥ selected bytes × 1.02 + 256 MB margin.
 - Existing target: same size and mtime (within 2s) → `skipped (exists)`; otherwise `conflict` and skipped. No overwrite in v1.
-- Temp file `.usbcopy.<random>.part` in the target directory; chunked copy (8 MB); SHA-256 computed while reading; fsync; verify destination hash; atomic `os.replace`; set mtime; fsync directory.
+- Temp file `.usbcopy.<random>.part` in the target directory; chunked copy (8 MB); SHA-256 computed while reading; fsync; verify temp hash; set mtime/mode on the temp; atomic no-clobber publish via `os.link` (fails if the target exists) then unlink the temp; fsync the directory (a failure is logged, never a false "not copied").
 - Any failure removes the temp file. No `.part` survives a failed item.
 - Retries per file: 3, backoff 2s/5s/10s. Run continues after exhaustion; item marked failed with the error.
 - Progress is persisted at most once per second per run, plus on every item state change, to avoid SQLite write amplification on large files.
@@ -383,7 +383,7 @@ skip_hidden_root_dirs = true
 
 ## 18. Testing and verification
 
-- Unit tests: path validation, planner/duplicate logic, media hints, copy+hash+atomic rename, retry, conflict handling, inventory skipping, DB migrations, auth/CSRF.
+- Unit tests: path validation, planner/duplicate logic, media hints, copy+hash+atomic no-clobber publish, retry, conflict handling, inventory skipping, DB migrations, auth/CSRF.
 - Integration tests: temp source/destination trees; simulate an event file and a fake mount; full review → run → history; interrupted run recovery; stale temp cleanup.
 - API tests with FastAPI TestClient; SSE smoke test.
 - Shell: `shellcheck`, `bash -n`; installer `--dry-run` test that performs all checks and prints the plan without changes.
