@@ -1,0 +1,42 @@
+# usbcopy configuration — install as /etc/usbcopy/config.toml (mode 0640,
+# owner root:usbcopy). Reference layout: DESIGN.md section 17.
+
+[server]
+host = "0.0.0.0"
+port = 8088
+
+[auth]
+username = "admin"
+password_hash = "CHANGE_ME_BCRYPT_HASH"
+session_secret = "CHANGE_ME_RANDOM_SESSION_SECRET"
+
+[source]
+# Empty means "browse the whole drive" in Review mode.
+default_folder = ""
+
+[mode]
+default = "review"        # review | auto
+auto_enabled = false
+auto_destination = "movies"
+
+[copy]
+verify_sha256 = true
+chunk_size_mb = 8
+retries = 3
+preserve_mtime = true
+
+[destinations.movies]
+path = "/data/movies"
+[destinations.series]
+path = "/data/series"
+
+[scan]
+reconcile_minutes = 0     # 0 = off
+skip_hidden_root_dirs = true
+
+# Optional application path overrides (defaults shown). The installer uses
+# the defaults; override only for development or non-standard layouts.
+# [paths]
+# db_path = "/var/lib/usbcopy/usbcopy.db"
+# events_dir = "/run/usbcopy/events"
+# mounts_root = "/srv/usb-ingest"
