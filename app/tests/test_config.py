@@ -100,7 +100,7 @@ def test_paths_default_to_design_locations(tmp_path):
     cfg = load_config(write_config(tmp_path))
     assert cfg.db_path == Path("/var/lib/usbcopy/usbcopy.db")
     assert cfg.events_dir == Path("/run/usbcopy/events")
-    assert cfg.mounts_root == Path("/srv/usb-ingest")
+    assert cfg.mounts_root == Path("/mnt/usb")
 
 
 def test_paths_section_overrides_defaults(tmp_path):

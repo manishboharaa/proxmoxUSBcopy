@@ -39,4 +39,4 @@ skip_hidden_root_dirs = true
 # [paths]
 # db_path = "/var/lib/usbcopy/usbcopy.db"
 # events_dir = "/run/usbcopy/events"
-# mounts_root = "/srv/usb-ingest"
+# mounts_root = "/mnt/usb"
