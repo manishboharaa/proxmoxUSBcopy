@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Fake pct for installer tests. Read-only output for dry-runs; every call is
+# logged so tests can prove no mutating subcommand ran.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'pct %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi
+
+case "${1:-}" in
+    list)
+        printf 'VMID       Status     Lock         Name\n'
+        printf '100        stopped                 legacy-ct\n'
+        ;;
+    status)
+        printf 'status: running\n'
+        ;;
+    *)
+        ;;
+esac

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Fake pveam for installer tests.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'pveam %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi
+printf 'debian-12-standard_12.7-1_amd64.tar.zst\n'

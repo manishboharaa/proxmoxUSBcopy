@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Fake pvesm for installer tests. Reports storages by content type.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'pvesm %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi
+
+print_header() {
+    printf 'Name             Type     Status           Total            Used       Available        %%\n'
+}
+
+print_images() {
+    print_header
+    printf 'local             dir      active        1000000          500000          500000   50.00%%\n'
+    printf 'local-lvm     lvmthin      active        2000000          800000         1200000   40.00%%\n'
+}
+
+print_vztmpl() {
+    print_header
+    printf 'local             dir      active        1000000          500000          500000   50.00%%\n'
+}
+
+case "$*" in
+    *'--content images'*)
+        print_images
+        ;;
+    *'--content vztmpl'*)
+        print_vztmpl
+        ;;
+    *)
+        print_images
+        print_vztmpl
+        ;;
+esac

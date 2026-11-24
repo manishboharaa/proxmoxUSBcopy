@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Fake pveversion for installer tests.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'pveversion %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi
+printf 'pve-manager/8.2.4/6b7f3b4d9f4e1c2a (running kernel: 6.8.4-2-pve)\n'

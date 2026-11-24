@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake systemctl for installer tests.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'systemctl %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake pct-exec for installer tests: stands in for `pct exec <id> -- <cmd>`.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'pct exec %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi

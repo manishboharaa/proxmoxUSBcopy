@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake curl for installer tests: connectivity always succeeds.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'curl %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi
