@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -83,6 +85,25 @@ def login(client: TestClient):
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     return response
+
+
+def needs_attention_kpi(html: str) -> tuple[str, str]:
+    """Extract the Needs attention KPI value and note from the overview HTML."""
+    match = re.search(
+        r'<p class="kpi-label">\s*(?:<svg[^>]*>.*?</svg>\s*)?Needs attention\s*</p>'
+        r'\s*<p class="kpi-value">(.*?)</p>'
+        r'\s*<p class="kpi-note">(.*?)</p>',
+        html,
+        re.DOTALL,
+    )
+    assert match is not None
+    value = re.sub(r"<[^>]+>", "", match.group(1)).strip()
+    note = re.sub(r"<[^>]+>", "", match.group(2)).strip()
+    return value, note
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def test_root_redirects_to_login(client):
@@ -234,6 +255,79 @@ def test_overview_empty_states(client, login):
     assert "No transfer is running." in html
     assert "Queue is empty." in html
     assert "No recent runs." in html
+
+
+def test_needs_attention_does_not_report_duplicate_conflicts(client, login, conn):
+    conn.execute("UPDATE drives SET present = 1 WHERE id = 1")
+    cursor = conn.execute(
+        "INSERT INTO inventories (drive_id, root, status) "
+        "VALUES (1, '/mnt/usb', 'complete')"
+    )
+    inventory_id = cursor.lastrowid
+    conn.execute(
+        "INSERT INTO inventory_entries "
+        "(inventory_id, rel_path, parent_path, is_dir, size, kind, duplicate_state) "
+        "VALUES (?, 'Movies/Heat (1995)/Heat.mkv', 'Movies/Heat (1995)', "
+        "        0, 10, 'video', 'conflict')",
+        (inventory_id,),
+    )
+    conn.commit()
+
+    html = client.get("/").text
+    value, note = needs_attention_kpi(html)
+    assert value == "0"
+    assert "conflict" not in note.lower()
+
+
+def test_needs_attention_counts_failed_files_and_runs(client, login, conn):
+    now = _now_iso()
+    cursor = conn.execute(
+        "INSERT INTO runs "
+        "(drive_id, destination_key, mode, status, started_at, finished_at, "
+        " files_total, bytes_total) "
+        "VALUES (1, 'movies', 'review', 'interrupted', ?, ?, 1, 100)",
+        (now, now),
+    )
+    run_id = cursor.lastrowid
+    conn.execute(
+        "INSERT INTO run_items "
+        "(run_id, rel_path, size, dest_rel_path, status, finished_at, error) "
+        "VALUES (?, 'Movies/X.mkv', 100, 'X.mkv', 'failed', ?, "
+        "        'permission denied')",
+        (run_id, now),
+    )
+    conn.commit()
+
+    html = client.get("/").text
+    value, note = needs_attention_kpi(html)
+    assert value == "2"
+    assert "1 failed file" in note
+    assert "1 interrupted or failed run" in note
+    assert "conflict" not in note.lower()
+
+
+def test_needs_attention_ignores_issues_older_than_24_hours(client, login, conn):
+    old = "2020-01-01T00:00:00.000Z"
+    cursor = conn.execute(
+        "INSERT INTO runs "
+        "(drive_id, destination_key, mode, status, started_at, finished_at, "
+        " files_total, bytes_total) "
+        "VALUES (1, 'movies', 'review', 'interrupted', ?, ?, 1, 100)",
+        (old, old),
+    )
+    run_id = cursor.lastrowid
+    conn.execute(
+        "INSERT INTO run_items "
+        "(run_id, rel_path, size, dest_rel_path, status, finished_at, error) "
+        "VALUES (?, 'Movies/Old.mkv', 100, 'Old.mkv', 'failed', ?, 'old')",
+        (run_id, old),
+    )
+    conn.commit()
+
+    html = client.get("/").text
+    value, note = needs_attention_kpi(html)
+    assert value == "0"
+    assert note == "No failed files or interrupted runs in the last 24 hours."
 
 
 def test_overview_escapes_drive_label(client, login, conn):

@@ -573,28 +573,18 @@ def _kpis(
         "WHERE status = 'failed' AND COALESCE(finished_at, started_at) >= ?",
         (cutoff,),
     )
-    conflicts = _scalar(
-        conn,
-        "SELECT COUNT(*) FROM inventory_entries e "
-        "WHERE e.duplicate_state = 'conflict' AND e.inventory_id IN ("
-        "  SELECT MAX(i.id) FROM inventories i "
-        "  JOIN drives d ON d.id = i.drive_id "
-        "  WHERE i.status = 'complete' AND d.present = 1 GROUP BY i.drive_id"
-        ")",
-    )
     interrupted = _scalar(
         conn,
         "SELECT COUNT(*) FROM runs WHERE status IN ('interrupted', 'failed') "
         "AND COALESCE(finished_at, started_at) >= ?",
         (cutoff,),
     )
-    attention = failed_items + conflicts + interrupted
+    attention = failed_items + interrupted
     attention_note = (
         f"{_count(failed_items, 'failed file')}, "
-        f"{_count(conflicts, 'conflict')}, "
-        f"{_count(interrupted, 'interrupted run')}."
+        f"{_count(interrupted, 'interrupted or failed run')}."
         if attention
-        else "No issues in the last 24 hours."
+        else "No failed files or interrupted runs in the last 24 hours."
     )
 
     return [
