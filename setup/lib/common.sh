@@ -21,7 +21,35 @@ USBC_ANSWERS_SET=0
 if [[ -n ${USBC_ANSWERS+set} ]]; then
     USBC_ANSWERS_SET=1
     read -r -a USBC_ANSWER_ITEMS <<<"$USBC_ANSWERS"
+    # Keep answers in the non-exported array only: child processes must never
+    # inherit the admin password via the environment.
+    unset USBC_ANSWERS
 fi
+
+# Interactive prompts use one persistent /dev/tty descriptor. There is no
+# stdin fallback: a piped installer that needs answers must fail clearly.
+USBC_TTY_FD=''
+USBC_TTY_OPEN=0
+
+open_tty() {
+    if ((USBC_TTY_OPEN == 1)); then
+        return 0
+    fi
+    if { exec {USBC_TTY_FD}<>/dev/tty; } 2>/dev/null; then
+        USBC_TTY_OPEN=1
+        return 0
+    fi
+    return 1
+}
+
+require_interactive_tty() {
+    if noninteractive; then
+        return 0
+    fi
+    if ! open_tty; then
+        die "no terminal available for prompts (/dev/tty could not be opened); re-run from an interactive terminal or use --yes"
+    fi
+}
 
 log() {
     printf '%s: %s\n' "$PROG" "$*"
@@ -77,12 +105,15 @@ format_prompt() {
 read_tty() {
     local prompt=$1
     local value=''
-    if [[ -r /dev/tty ]]; then
-        printf '%s' "$prompt" >&2
-        IFS= read -r value </dev/tty || value=''
-    else
-        printf '%s' "$prompt" >&2
-        IFS= read -r value || value=''
+
+    if ! open_tty; then
+        return 1
+    fi
+    if ! printf '%s' "$prompt" >&"$USBC_TTY_FD"; then
+        return 1
+    fi
+    if ! IFS= read -r value <&"$USBC_TTY_FD"; then
+        return 1
     fi
     printf '%s' "$value"
 }
@@ -90,20 +121,32 @@ read_tty() {
 read_tty_secret() {
     local prompt=$1
     local value=''
-    if [[ -r /dev/tty ]]; then
-        printf '%s' "$prompt" >&2
-        if command -v -- stty >/dev/null 2>&1; then
-            stty -echo </dev/tty 2>/dev/null || true
-        fi
-        IFS= read -r value </dev/tty || value=''
-        if command -v -- stty >/dev/null 2>&1; then
-            stty echo </dev/tty 2>/dev/null || true
-        fi
-        printf '\n' >&2
-    else
-        printf '%s' "$prompt" >&2
-        IFS= read -r value || value=''
+    local echo_disabled=0
+
+    if ! open_tty; then
+        return 1
     fi
+    if command -v -- stty >/dev/null 2>&1; then
+        if stty -echo <&"$USBC_TTY_FD" 2>/dev/null; then
+            echo_disabled=1
+        fi
+    fi
+    if ! printf '%s' "$prompt" >&"$USBC_TTY_FD"; then
+        if ((echo_disabled == 1)); then
+            stty echo <&"$USBC_TTY_FD" 2>/dev/null || true
+        fi
+        return 1
+    fi
+    if ! IFS= read -r value <&"$USBC_TTY_FD"; then
+        if ((echo_disabled == 1)); then
+            stty echo <&"$USBC_TTY_FD" 2>/dev/null || true
+        fi
+        return 1
+    fi
+    if ((echo_disabled == 1)); then
+        stty echo <&"$USBC_TTY_FD" 2>/dev/null || true
+    fi
+    printf '\n' >&"$USBC_TTY_FD"
     printf '%s' "$value"
 }
 
@@ -121,7 +164,9 @@ ask() {
             value=$default
         fi
     else
-        value=$(read_tty "$(format_prompt "$prompt" "$default")")
+        if ! value=$(read_tty "$(format_prompt "$prompt" "$default")"); then
+            die "could not read an answer from the terminal"
+        fi
         if [[ -z $value ]]; then
             value=$default
         fi
@@ -139,7 +184,9 @@ ask_secret() {
             value=$USBC_ANSWER_VALUE
         fi
     else
-        value=$(read_tty_secret "$prompt")
+        if ! value=$(read_tty_secret "$prompt"); then
+            die "could not read the admin password from the terminal"
+        fi
     fi
     printf -v "$varname" '%s' "$value"
 }
@@ -176,12 +223,22 @@ validate_path() {
         || die "$name must not contain control characters"
 }
 
-normalize_path() {
-    local value=$1
-    while [[ $value == */ && $value != '/' ]]; do
-        value=${value%/}
-    done
-    printf '%s' "$value"
+canonical_path() {
+    local name=$1
+    local value=$2
+    local canonical=''
+
+    validate_path "$name" "$value"
+    if ! canonical=$(realpath -m -- "$value"); then
+        die "$name cannot be resolved to an absolute path: $value"
+    fi
+    [[ -n $canonical ]] || die "$name cannot be resolved to an absolute path: $value"
+    [[ $canonical == /* ]] || die "$name must resolve to an absolute path: $value"
+    [[ $canonical != '/' ]] || die "$name must not resolve to /: $value"
+    [[ $canonical != *'..'* ]] || die "$name must not contain '..': $value"
+    [[ $canonical != *$'\n'* && $canonical != *$'\r'* && $canonical != *$'\t'* ]] \
+        || die "$name must not contain control characters"
+    printf '%s' "$canonical"
 }
 
 validate_hostname() {

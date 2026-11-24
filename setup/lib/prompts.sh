@@ -122,8 +122,7 @@ prompt_required_destination() {
     if [[ -z $value ]]; then
         die "$label destination is required"
     fi
-    validate_path "$label destination" "$value"
-    value=$(normalize_path "$value")
+    value=$(canonical_path "$label destination" "$value")
     printf -v "$varname" '%s' "$value"
 }
 
@@ -135,11 +134,15 @@ prompt_extra_destination() {
             DEST_EXTRA=''
             ;;
         *)
-            validate_path "extra destination" "$DEST_EXTRA"
-            DEST_EXTRA=$(normalize_path "$DEST_EXTRA")
+            DEST_EXTRA=$(canonical_path "extra destination" "$DEST_EXTRA")
             base=${DEST_EXTRA##*/}
             [[ $base =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
                 || die "extra destination folder name must use letters, digits, dot, dash, or underscore: $base"
+            case "${base,,}" in
+                movies | series)
+                    die "extra destination must not use the reserved Movies or Series name: $base"
+                    ;;
+            esac
             ;;
     esac
 }
@@ -279,7 +282,9 @@ confirm_summary() {
                 ;;
         esac
     fi
-    answer=$(read_tty "Proceed with these settings? [Y/n]: ")
+    if ! answer=$(read_tty "Proceed with these settings? [Y/n]: "); then
+        die "confirmation failed: could not read from the terminal"
+    fi
     case "${answer,,}" in
         '' | y | yes)
             return 0

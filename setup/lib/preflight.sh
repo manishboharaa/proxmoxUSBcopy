@@ -29,6 +29,7 @@ preflight_commands() {
     require_cmd pvesm
     require_cmd pveam
     require_cmd curl
+    require_cmd realpath
 }
 
 preflight_pve() {
@@ -171,6 +172,7 @@ next_free_ct_id() {
 preflight_destination() {
     local name=$1
     local path=$2
+    local exists_var=$3
     local available=''
 
     if [[ -e $path ]]; then
@@ -188,12 +190,10 @@ preflight_destination() {
         else
             log "$name: $path"
         fi
+        printf -v "$exists_var" '%s' 1
     else
-        if ((DRY_RUN == 1)); then
-            log "$name will be created: $path"
-        else
-            die "$name does not exist: $path (creation runs during the install step)"
-        fi
+        log "$name will be created during install: $path"
+        printf -v "$exists_var" '%s' 0
     fi
 }
 
@@ -203,14 +203,19 @@ preflight_destinations() {
     if [[ -n $DEST_EXTRA ]]; then
         [[ $DEST_EXTRA != "$DEST_MOVIES" && $DEST_EXTRA != "$DEST_SERIES" ]] \
             || die "extra destination must differ from Movies and Series"
+        case "${DEST_EXTRA##*/}" in
+            [Mm][Oo][Vv][Ii][Ee][Ss] | [Ss][Ee][Rr][Ii][Ee][Ss])
+                die "extra destination must not use the reserved Movies or Series name"
+                ;;
+        esac
     fi
     if [[ $AUTO_MODE == yes && -z $SOURCE_FOLDER ]]; then
         die "Auto mode requires a default source folder"
     fi
 
-    preflight_destination "Movies destination" "$DEST_MOVIES"
-    preflight_destination "Series destination" "$DEST_SERIES"
+    preflight_destination "Movies destination" "$DEST_MOVIES" DEST_MOVIES_EXISTS
+    preflight_destination "Series destination" "$DEST_SERIES" DEST_SERIES_EXISTS
     if [[ -n $DEST_EXTRA ]]; then
-        preflight_destination "extra destination" "$DEST_EXTRA"
+        preflight_destination "extra destination" "$DEST_EXTRA" DEST_EXTRA_EXISTS
     fi
 }
