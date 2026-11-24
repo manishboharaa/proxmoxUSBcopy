@@ -1,0 +1,14 @@
+# proxmoxUSBcopy: boot-time scan for USB filesystems that are already plugged
+# in. udev handles hotplug; this unit covers drives present while the host was
+# off. The scan is idempotent and skips devices that are already mounted.
+[Unit]
+Description=proxmoxUSBcopy boot-time USB filesystem scan
+After=local-fs.target systemd-udevd.service
+ConditionPathExists=/usr/local/lib/usbcopy/scan-usb.sh
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/usbcopy/scan-usb.sh
+
+[Install]
+WantedBy=multi-user.target

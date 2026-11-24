@@ -1,0 +1,18 @@
+# proxmoxUSBcopy: mount one USB filesystem read-only and emit an add event.
+#
+# Instantiated by the udev rule and by usbcopy-scan-usb.service as
+# usbcopy-mount@<kernel-device-name>.service, for example
+# usbcopy-mount@sda1.service. BindsTo makes systemd stop the unit when the
+# device disappears, which runs ExecStop to unmount and emit the remove event.
+[Unit]
+Description=proxmoxUSBcopy read-only mount of /dev/%i
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/usbcopy/mount-usb.sh --device /dev/%i
+ExecStop=/usr/local/lib/usbcopy/unmount-usb.sh --device /dev/%i
+TimeoutStartSec=90
+TimeoutStopSec=90

@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+# proxmoxUSBcopy: unmount one USB mountpoint and emit a spool remove event.
+#
+# This script runs as root on the Proxmox host, normally from the ExecStop=
+# of the usbcopy-mount@.service template unit.
+set -euo pipefail
+
+PROG=${0##*/}
+DEFAULT_MOUNT_ROOT=/srv/usb-ingest
+DEFAULT_SPOOL=/srv/usbcopy/events
+DEFAULT_STATE_DIR=/run/usbcopy/mounts
+
+usage() {
+    cat <<EOF
+Usage: $PROG --mountpoint /srv/usb-ingest/<uuid>
+       $PROG --device /dev/sda1
+
+Unmount a proxmoxUSBcopy mountpoint, remove the empty directory, and write
+one remove event into the spool. --device lets the systemd stop job resolve
+the UUID-based mountpoint even after the drive has disappeared.
+
+Options:
+  --mountpoint PATH    Mountpoint to unmount (mutually exclusive with --device)
+  --device PATH        Block device whose mount should be removed
+  --mount-root PATH    Mount root used for device resolution
+                       (default: $DEFAULT_MOUNT_ROOT)
+  --spool PATH         Event spool (default: $DEFAULT_SPOOL)
+  --dry-run            Print the umount command and event JSON only
+  -h, --help           Show this help
+EOF
+}
+
+die() {
+    printf '%s: %s\n' "$PROG" "$*" >&2
+    exit 1
+}
+
+log() {
+    printf '%s: %s\n' "$PROG" "$*" >&2
+}
+
+require_command() {
+    local name=$1
+    command -v "$name" >/dev/null 2>&1 || die "required command not found: $name"
+}
+
+validate_absolute_path() {
+    local value=$1
+    local name=$2
+    [[ -n $value ]] || die "$name must not be empty"
+    [[ $value == /* ]] || die "$name must be an absolute path: $value"
+    [[ $value != *'..'* ]] || die "$name must not contain '..': $value"
+    [[ $value != *$'\n'* ]] || die "$name must not contain a newline"
+}
+
+validate_uuid() {
+    local value=$1
+    [[ -n $value ]] || die "drive uuid is empty"
+    [[ $value != '.' && $value != '..' ]] || die "invalid drive uuid: $value"
+    [[ $value =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid drive uuid: $value"
+    ((${#value} <= 128)) || die "drive uuid is too long: $value"
+}
+
+event_json() {
+    local action=$1
+    local timestamp=$2
+    USBC_ACTION="$action" \
+        USBC_UUID="$uuid" \
+        USBC_LABEL="$label" \
+        USBC_SERIAL="$serial" \
+        USBC_DEVICE="$device" \
+        USBC_MOUNTPOINT="$mountpoint" \
+        USBC_FS_TYPE="$fs_type" \
+        USBC_TS="$timestamp" \
+        python3 - <<'PY'
+import json
+import os
+
+payload = {
+    "version": 1,
+    "action": os.environ["USBC_ACTION"],
+    "uuid": os.environ["USBC_UUID"],
+    "label": os.environ["USBC_LABEL"] or None,
+    "serial": os.environ["USBC_SERIAL"] or None,
+    "device": os.environ["USBC_DEVICE"],
+    "mountpoint": os.environ["USBC_MOUNTPOINT"],
+    "fs_type": os.environ["USBC_FS_TYPE"],
+    "ts": os.environ["USBC_TS"],
+}
+print(json.dumps(payload, separators=(",", ":")))
+PY
+}
+
+write_event() {
+    local action=$1
+    local timestamp
+    local compact
+    local payload
+    local tmp
+    local final
+
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    compact=$(date -u +%Y%m%dT%H%M%S%NZ)
+    payload=$(event_json "$action" "$timestamp") || return 1
+
+    if [[ ! -d $spool ]]; then
+        mkdir -p -- "$spool" || return 1
+        chmod 0750 -- "$spool" 2>/dev/null || true
+        log "created spool $spool; installer should set its app ownership"
+    fi
+
+    tmp=$(mktemp "$spool/.event.XXXXXX") || return 1
+    final="$spool/${compact}-${action}-${uuid}-$$.json"
+    if ! printf '%s\n' "$payload" >"$tmp"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    chmod 0644 -- "$tmp" || true
+    if ! mv -f -- "$tmp" "$final"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    printf '%s\n' "$payload"
+}
+
+mountpoint=''
+device_arg=''
+mount_root=$DEFAULT_MOUNT_ROOT
+spool=$DEFAULT_SPOOL
+state_dir=$DEFAULT_STATE_DIR
+dry_run=0
+
+while (($# > 0)); do
+    case "$1" in
+        --mountpoint)
+            (($# >= 2)) || die "--mountpoint requires a value"
+            mountpoint=$2
+            shift 2
+            ;;
+        --device)
+            (($# >= 2)) || die "--device requires a value"
+            device_arg=$2
+            shift 2
+            ;;
+        --mount-root)
+            (($# >= 2)) || die "--mount-root requires a value"
+            mount_root=$2
+            shift 2
+            ;;
+        --spool)
+            (($# >= 2)) || die "--spool requires a value"
+            spool=$2
+            shift 2
+            ;;
+        --dry-run)
+            dry_run=1
+            shift
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "unknown argument: $1"
+            ;;
+    esac
+done
+
+validate_absolute_path "$mount_root" "--mount-root"
+validate_absolute_path "$spool" "--spool"
+require_command python3
+
+device=''
+assumed_mountpoint=0
+if [[ -n $mountpoint && -n $device_arg ]]; then
+    die "use either --mountpoint or --device, not both"
+elif [[ -n $mountpoint ]]; then
+    validate_absolute_path "$mountpoint" "--mountpoint"
+elif [[ -n $device_arg ]]; then
+    [[ $device_arg =~ ^/dev/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+        || die "invalid device path (expected a single /dev node): $device_arg"
+    device=$device_arg
+    state_file="$state_dir/${device##*/}"
+    if [[ -r $state_file ]]; then
+        state_value=''
+        IFS= read -r state_value <"$state_file" || true
+        if [[ -n $state_value && $state_value == /* && $state_value != *'..'* ]]; then
+            mountpoint=$state_value
+        else
+            log "warning: ignoring invalid mount state: $state_file"
+        fi
+    fi
+    if [[ -z $mountpoint ]] && command -v findmnt >/dev/null 2>&1; then
+        targets=()
+        mapfile -t targets < <(
+            findmnt --noheadings --output TARGET --source "$device" 2>/dev/null || true
+        )
+        selected=''
+        for candidate in "${targets[@]}"; do
+            if [[ $candidate == "${mount_root%/}/"* ]]; then
+                selected=$candidate
+                break
+            fi
+        done
+        if [[ -z $selected && ${#targets[@]} -eq 1 ]]; then
+            selected=${targets[0]}
+        fi
+        mountpoint=$selected
+    fi
+    if [[ -z $mountpoint ]] && command -v blkid >/dev/null 2>&1; then
+        derived_uuid=$(blkid -s UUID -o value -- "$device" 2>/dev/null || true)
+        if [[ $derived_uuid != '.' && $derived_uuid != '..' ]] \
+            && [[ $derived_uuid =~ ^[A-Za-z0-9._-]+$ ]]; then
+            mountpoint="${mount_root%/}/$derived_uuid"
+        fi
+    fi
+    if [[ -z $mountpoint ]]; then
+        mountpoint="${mount_root%/}/${device##*/}"
+        assumed_mountpoint=1
+    fi
+else
+    die "one of --mountpoint or --device is required"
+fi
+
+validate_absolute_path "$mountpoint" "--mountpoint"
+while [[ $mountpoint == */ && $mountpoint != / ]]; do
+    mountpoint=${mountpoint%/}
+done
+[[ $mountpoint != / ]] || die "refusing to unmount /"
+uuid=${mountpoint##*/}
+validate_uuid "$uuid"
+
+fs_type=''
+label=''
+serial=''
+mounted=0
+
+if command -v findmnt >/dev/null 2>&1 \
+    && findmnt --mountpoint "$mountpoint" >/dev/null 2>&1; then
+    mounted=1
+    sources=()
+    mapfile -t sources < <(
+        findmnt --noheadings --output SOURCE --mountpoint "$mountpoint" 2>/dev/null || true
+    )
+    if [[ -n ${sources[0]:-} ]]; then
+        device=${sources[0]}
+    fi
+    filesystems=()
+    mapfile -t filesystems < <(
+        findmnt --noheadings --output FSTYPE --mountpoint "$mountpoint" 2>/dev/null || true
+    )
+    if [[ -n ${filesystems[0]:-} ]]; then
+        fs_type=${filesystems[0]}
+    fi
+fi
+
+if [[ -z $device && -e /dev/disk/by-uuid/$uuid ]]; then
+    device=$(readlink -f -- "/dev/disk/by-uuid/$uuid" 2>/dev/null || true)
+fi
+
+if [[ -n $device ]] && command -v blkid >/dev/null 2>&1; then
+    block_info=$(blkid -o export -- "$device" 2>/dev/null || true)
+    while IFS='=' read -r key value; do
+        case "$key" in
+            LABEL)
+                label=$value
+                ;;
+            TYPE)
+                if [[ -z $fs_type ]]; then
+                    fs_type=$value
+                fi
+                ;;
+        esac
+    done <<<"$block_info"
+fi
+
+if [[ -z $serial && -n $device ]] && command -v udevadm >/dev/null 2>&1; then
+    dev_properties=$(udevadm info --query=property --name="$device" 2>/dev/null || true)
+    while IFS='=' read -r key value; do
+        if [[ $key == ID_SERIAL_SHORT && -z $serial ]]; then
+            serial=$value
+        fi
+    done <<<"$dev_properties"
+fi
+
+if [[ -z $fs_type ]]; then
+    fs_type='unknown'
+fi
+device_unknown=0
+if [[ -z $device ]]; then
+    device='/dev/unknown'
+    device_unknown=1
+fi
+
+if ((dry_run == 1)); then
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    printf 'umount -- %s\n' "$mountpoint"
+    event_json remove "$timestamp"
+    exit 0
+fi
+
+((EUID == 0)) || die "must be run as root"
+
+if ((device_unknown == 1)); then
+    log "warning: cannot determine device for $mountpoint; writing remove event with $device"
+fi
+if ((assumed_mountpoint == 1)); then
+    log "warning: cannot locate a mount for $device; assuming $mountpoint"
+fi
+
+if ((mounted == 1)); then
+    if ! umount -- "$mountpoint"; then
+        die "unmount failed: $mountpoint"
+    fi
+else
+    log "$mountpoint is not mounted; continuing"
+fi
+
+if [[ -d $mountpoint ]]; then
+    if ! rmdir -- "$mountpoint" 2>/dev/null; then
+        log "warning: mountpoint is not empty, leaving it in place: $mountpoint"
+    fi
+fi
+
+if ! write_event remove; then
+    die "could not write remove event to $spool"
+fi
+
+if [[ -n $device && $device != /dev/unknown ]]; then
+    rm -f -- "$state_dir/${device##*/}" 2>/dev/null || true
+fi

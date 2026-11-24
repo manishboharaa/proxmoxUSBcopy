@@ -1,0 +1,6 @@
+# proxmoxUSBcopy: start a read-only mount unit for every USB filesystem.
+#
+# The mount script validates the filesystem type and rejects anything other
+# than ext2/3/4, vfat, exfat, and ntfs. BindsTo=dev-%i.device in the unit
+# stops it again when the device disappears.
+SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{ID_FS_TYPE}!="", TAG+="systemd", ENV{SYSTEMD_WANTS}+="usbcopy-mount@%k.service"
