@@ -74,9 +74,9 @@ bootstrap_from_pipe() {
     done
 
     case "$repo_url" in
-        http://* | https://*) ;;
+        https://*) ;;
         *)
-            printf 'install.sh: error: piped installs require an https:// repository URL; use a checkout for ssh/git URLs\n' >&2
+            printf 'install.sh: error: piped installs require an https:// repository URL; use a checkout for http/ssh/git URLs\n' >&2
             exit 1
             ;;
     esac

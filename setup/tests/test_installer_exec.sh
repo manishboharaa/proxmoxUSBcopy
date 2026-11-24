@@ -207,6 +207,23 @@ assert_file_contains 'events_dir = "/run/usbcopy/events"' "$config" 'config'
 assert_file_contains 'db_path = "/var/lib/usbcopy/usbcopy.db"' "$config" 'config'
 assert_file_contains 'session_secret = ' "$config" 'config'
 assert_file_contains 'password_hash = "$2b$' "$config" 'config'
+PYTHONPATH="$REPO_ROOT/app" python3 - "$config" <<'PYVALIDATE'
+from pathlib import Path
+import sys
+
+from usbcopy.config import load_config
+
+cfg = load_config(Path(sys.argv[1]))
+assert cfg.port == 8089, cfg
+assert str(cfg.destinations["movies"].path) == "/data/movies", cfg
+assert str(cfg.destinations["series"].path) == "/data/series", cfg
+assert str(cfg.destinations["other"].path) == "/data/other", cfg
+assert str(cfg.events_dir) == "/run/usbcopy/events", cfg
+assert str(cfg.db_path) == "/var/lib/usbcopy/usbcopy.db", cfg
+assert str(cfg.mounts_root) == "/mnt/usb", cfg
+assert cfg.default_mode == "review", cfg
+assert cfg.auto_enabled is False, cfg
+PYVALIDATE
 unit="$USBC_FAKE_PUSH_DIR/usbcopy.service"
 [[ -f $unit ]] || fail "install_app did not push usbcopy.service"
 assert_file_contains 'User=usbcopy' "$unit" 'unit'
@@ -221,6 +238,16 @@ render_config "$WORK/custom-config.toml" '$2b$12$example' 'session-secret'
 assert_file_contains 'path = "/data/movies"' "$WORK/custom-config.toml" 'custom config'
 assert_file_contains 'path = "/data/series"' "$WORK/custom-config.toml" 'custom config'
 assert_not_contains 'path = "/data/Films"' "$(<"$WORK/custom-config.toml")" 'custom config'
+PYTHONPATH="$REPO_ROOT/app" python3 - "$WORK/custom-config.toml" <<'PYVALIDATE'
+from pathlib import Path
+import sys
+
+from usbcopy.config import load_config
+
+cfg = load_config(Path(sys.argv[1]))
+assert str(cfg.destinations["movies"].path) == "/data/movies", cfg
+assert str(cfg.destinations["series"].path) == "/data/series", cfg
+PYVALIDATE
 pass "config destinations use the CT mount paths, not the host folder basenames"
 
 reset_fixtures
