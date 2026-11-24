@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Import{% endblock %}
+
+{% block content %}
+<div class="page-head" id="top">
+  <div>
+    <h1>Import review</h1>
+    <p class="page-sub">{{ page_sub }}</p>
+  </div>
+  <div class="page-meta">
+    <span class="chip chip-neutral">Review mode</span>
+    <span class="chip chip-neutral">Nothing copied until you confirm</span>
+  </div>
+</div>
+
+{% if error %}
+<div class="panel banner-error" role="alert">{{ error }}</div>
+{% endif %}
+
+<div class="import-app" id="import-app"
+     data-csrf="{{ csrf_token }}"
+     data-inventory="{{ initial_inventory_id }}"
+     data-drive="{{ initial_drive_id }}"
+     data-destination="{{ initial_destination }}">
+
+  <section class="panel import" aria-labelledby="import-title">
+    <div class="panel-head">
+      <div>
+        <h2 class="panel-title" id="import-title">Files on drive</h2>
+        <p class="panel-sub" id="import-sub">
+          {% if has_drives %}
+          Choose what to copy. Folders open on demand.
+          {% else %}
+          The tree appears when a drive is mounted and inventoried.
+          {% endif %}
+        </p>
+      </div>
+      {% if initial_drive %}
+      <span class="chip {{ initial_drive.chip[0] }}" id="drive-chip">{{ initial_drive.chip[1] }}</span>
+      {% else %}
+      <span class="chip chip-neutral" id="drive-chip">No drive</span>
+      {% endif %}
+    </div>
+
+    {% if has_drives %}
+    <div class="import-source">
+      <label for="drive-picker">Source drive</label>
+      <select id="drive-picker">
+        {% for drive in drives %}
+        <option value="{{ drive.drive_id }}"
+                data-inventory="{{ drive.inventory_id }}"
+                data-status="{{ drive.status }}"
+                data-label="{{ drive.label }}"
+                data-chip="{{ drive.chip[0] }}"
+                data-chip-label="{{ drive.chip[1] }}"
+                data-error="{{ drive.error or '' }}"
+                {% if drive.drive_id|string == initial_drive_id|string %}selected{% endif %}>
+          {{ drive.label }}{% if drive.serial %} · {{ drive.serial }}{% endif %} — {{ drive.contents }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+
+    <div class="empty" id="import-state" data-kind="{{ initial_state.kind }}">
+      <p class="empty-title" id="import-state-title">{{ initial_state.title }}</p>
+      <p class="empty-note" id="import-state-note">{{ initial_state.note }}</p>
+    </div>
+
+    <ul class="tree" id="import-tree" hidden aria-label="Files on the drive"></ul>
+
+    <noscript>
+      <p class="import-status">Selecting files needs JavaScript. This page only loads local assets.</p>
+    </noscript>
+  </section>
+
+  <aside class="panel import-side" aria-labelledby="start-title">
+    <div class="panel-head">
+      <div>
+        <h2 class="panel-title" id="start-title">Start import</h2>
+        <p class="panel-sub">One destination per batch.</p>
+      </div>
+      <span class="chip chip-neutral">Confirm</span>
+    </div>
+
+    <div class="dest">
+      <label for="destination">Destination</label>
+      <select id="destination">
+        {% for destination in destinations %}
+        <option value="{{ destination.key }}"
+                data-name="{{ destination.name }}"
+                data-free="{{ destination.free_text }}"
+                data-free-bytes="{{ destination.free_bytes }}"
+                data-total-bytes="{{ destination.total_bytes }}"
+                data-available="{{ 'true' if destination.available else 'false' }}"
+                {% if destination.key == initial_destination %}selected{% endif %}>
+          {{ destination.name }} ({{ destination.free_text }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="import-selection">
+      <p class="selection-label">Selected</p>
+      <p class="selection-value" id="selection-summary">No files selected.</p>
+      <p class="import-skip-note" id="skip-summary" hidden></p>
+    </div>
+
+    <div class="import-free">
+      <div class="capacity-head">
+        <span>Free space</span>
+        <span class="mono" id="free-head">
+          {% if initial_destination_item %}{{ initial_destination_item.used_percent }}% used{% else %}—{% endif %}
+        </span>
+      </div>
+      <div class="meter" id="free-meter" role="img"
+           aria-label="Destination is {{ initial_destination_item.used_percent if initial_destination_item else 0 }} percent full">
+        <span id="free-meter-fill" style="width: {{ initial_destination_item.used_percent if initial_destination_item else 0 }}%"></span>
+      </div>
+      <p class="free-note" id="free-note">
+        {% if initial_destination_item %}{{ initial_destination_item.free_text }} on {{ initial_destination_item.name }}{% else %}Destination space is unavailable.{% endif %}
+      </p>
+    </div>
+
+    <button class="btn btn-primary import-start" id="start-import" type="button" disabled>
+      <svg width="14" height="14" aria-hidden="true"><use href="#i-copy"></use></svg>
+      Start import
+    </button>
+
+    <p class="import-status" id="import-status" role="status" aria-live="polite"></p>
+
+    <div class="import-run" id="import-result" hidden>
+      <div class="import-run-head">
+        <p class="empty-title" id="run-title">Import started.</p>
+        <span class="chip chip-info" id="run-chip">Queued</span>
+      </div>
+      <p class="empty-note" id="run-note"></p>
+      <div class="meter import-run-meter" role="progressbar"
+           aria-label="Run progress" aria-valuemin="0" aria-valuemax="100"
+           aria-valuenow="0" id="run-meter">
+        <span id="run-meter-fill" style="width: 0%"></span>
+      </div>
+      <a class="btn btn-quiet import-run-link" id="run-link" href="/">Open run</a>
+    </div>
+
+    <div class="rules">
+      <p class="rules-title">Copy rules</p>
+      <p class="rules-line">Same size and mtime: skipped as already copied.</p>
+      <p class="rules-line">Different size or mtime: conflict, never overwritten.</p>
+      <p class="rules-line">Nothing on the drive is changed, moved, or deleted.</p>
+    </div>
+  </aside>
+</div>
+<script src="/static/js/import.js" defer></script>
+{% endblock %}

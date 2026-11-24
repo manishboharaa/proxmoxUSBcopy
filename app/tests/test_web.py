@@ -6,6 +6,7 @@ import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -85,6 +86,50 @@ def login(client: TestClient):
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     return response
+
+
+@pytest.fixture
+def present_drive(conn, tmp_path: Path) -> SimpleNamespace:
+    """Mount drive 1 with a complete inventory holding Movies and Shows."""
+    root = tmp_path / "drive-mount"
+    root.mkdir()
+    conn.execute(
+        "UPDATE drives SET present = 1, mountpoint = ?, serial = 'ABCD-1234', "
+        "fs_type = 'exFAT' WHERE id = 1",
+        (str(root),),
+    )
+    cursor = conn.execute(
+        "INSERT INTO inventories "
+        "(drive_id, root, status, total_files, total_bytes) "
+        "VALUES (1, ?, 'complete', 3, 4096)",
+        (str(root),),
+    )
+    inventory_id = cursor.lastrowid
+    entries = [
+        ("Movies", "", 1, 0, "other"),
+        ("Movies/Heat (1995)", "Movies", 1, 0, "other"),
+        ("Movies/Heat (1995)/Heat.mkv", "Movies/Heat (1995)", 0, 2048, "movie"),
+        ("Shows", "", 1, 0, "other"),
+        ("Shows/The Wire", "Shows", 1, 0, "other"),
+        (
+            "Shows/The Wire/S02E03.mkv",
+            "Shows/The Wire",
+            0,
+            2048,
+            "series",
+        ),
+    ]
+    conn.executemany(
+        "INSERT INTO inventory_entries "
+        "(inventory_id, rel_path, parent_path, is_dir, size, kind) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (inventory_id, rel_path, parent, is_dir, size, kind)
+            for rel_path, parent, is_dir, size, kind in entries
+        ],
+    )
+    conn.commit()
+    return SimpleNamespace(inventory_id=inventory_id, root=str(root))
 
 
 def needs_attention_kpi(html: str) -> tuple[str, str]:
@@ -377,3 +422,119 @@ def test_overview_uses_local_css_and_theme_script(client, login):
     theme = client.get("/static/js/theme.js")
     assert theme.status_code == 200
     assert "usbcopy-theme" in theme.text
+
+
+def test_import_page_requires_login(client):
+    response = client.get("/import", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+
+def test_import_page_shows_drive_and_destinations(
+    client, login, present_drive: SimpleNamespace
+):
+    html = client.get("/import").text
+    assert "Import review" in html
+    assert "Movies" in html and "Series" in html
+    assert "Test Drive" in html and "ABCD-1234" in html
+
+
+def test_import_page_has_csrf(client, login, config, present_drive):
+    token = client.cookies.get(SESSION_COOKIE)
+    session = SessionManager(config.session_secret).read(token)
+    assert session is not None
+    html = client.get("/import").text
+    assert f'name="csrf-token" content="{session.csrf}"' in html
+    assert f'data-csrf="{session.csrf}"' in html
+
+
+def test_import_page_has_no_settings_controls(client, login, present_drive):
+    html = client.get("/import").text
+    for control in (
+        "Save settings",
+        "Delete",
+        "Retry",
+        "Unmount",
+        "Scan now",
+    ):
+        assert control not in html
+
+
+def test_import_page_has_no_external_assets(client, login, present_drive):
+    body = client.get("/import").text
+    for needle in ('<script src="http', '<link href="http', '<img src="http'):
+        assert needle not in body
+    assert 'href="/static/css/app.css"' in body
+    assert 'src="/static/js/import.js"' in body
+
+
+def test_import_page_empty_state_without_drive(client, login):
+    html = client.get("/import").text
+    assert "No drive connected." in html
+    assert "No files selected." in html
+    assert re.search(r'<button[^>]*id="start-import"[^>]*disabled', html)
+
+
+def test_import_page_reports_scanning_inventory(client, login, conn):
+    conn.execute(
+        "UPDATE drives SET present = 1, serial = 'ABCD-1234' WHERE id = 1"
+    )
+    conn.execute(
+        "INSERT INTO inventories (drive_id, root, status) "
+        "VALUES (1, '/mnt/usb', 'scanning')"
+    )
+    conn.commit()
+
+    html = client.get("/import").text
+    assert "Inventory is still scanning." in html
+    assert re.search(r'<button[^>]*id="start-import"[^>]*disabled', html)
+
+
+def test_import_page_reports_failed_inventory(client, login, conn):
+    conn.execute(
+        "UPDATE drives SET present = 1, serial = 'ABCD-1234' WHERE id = 1"
+    )
+    conn.execute(
+        "INSERT INTO inventories (drive_id, root, status, error) "
+        "VALUES (1, '/mnt/usb', 'failed', 'permission denied')"
+    )
+    conn.commit()
+
+    html = client.get("/import").text
+    assert "Inventory failed." in html
+    assert "permission denied" in html
+
+
+def test_import_page_lists_only_present_drives(
+    client, login, conn, present_drive
+):
+    conn.execute(
+        "INSERT INTO drives (id, uuid, label, present) "
+        "VALUES (2, 'GONE-0001', 'Gone Drive', 0)"
+    )
+    conn.commit()
+
+    html = client.get("/import").text
+    assert "Test Drive" in html
+    assert "Gone Drive" not in html
+
+
+def test_import_page_escapes_drive_label(client, login, conn):
+    conn.execute(
+        "UPDATE drives SET present = 1, serial = 'ABCD-1234', "
+        "label = '<script>alert(1)</script>' WHERE id = 1"
+    )
+    conn.commit()
+    html = client.get("/import").text
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_import_page_uses_local_import_script(client, login, present_drive):
+    html = client.get("/import").text
+    assert 'id="import-app"' in html
+    assert 'src="/static/js/import.js"' in html
+    script = client.get("/static/js/import.js")
+    assert script.status_code == 200
+    assert "/api/imports/preview" in script.text
+    assert "EventSource" in script.text

@@ -143,6 +143,21 @@ def build_page_router(
             context = _empty_overview_context(config, f"Live data unavailable: {exc}")
         return templates.TemplateResponse(request, "overview.html", context)
 
+    @router.get("/import", response_class=HTMLResponse)
+    def import_page(request: Request) -> Response:
+        if resolve_session(request, session_manager) is None:
+            return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+        try:
+            conn = open_db(config.db_path)
+            try:
+                context = _import_context(conn, config)
+            finally:
+                conn.close()
+        except (OSError, sqlite3.Error) as exc:
+            logger.exception("could not load import page data")
+            context = _empty_import_context(config, f"Live data unavailable: {exc}")
+        return templates.TemplateResponse(request, "import.html", context)
+
     @router.get("/login", response_class=HTMLResponse)
     def login_page(request: Request) -> Response:
         next_path = _safe_next(request.query_params.get("next"))
@@ -306,6 +321,203 @@ def _empty_overview_context(config: Config, error: str) -> dict[str, Any]:
         "runs_chip": "Unavailable",
         "error": error,
     }
+
+
+def _import_context(
+    conn: sqlite3.Connection, config: Config
+) -> dict[str, Any]:
+    drives = _import_drives(conn)
+    destinations = _import_destinations(config)
+    initial_drive = next(
+        (drive for drive in drives if drive["status"] == "complete"),
+        drives[0] if drives else None,
+    )
+    initial_destination = next(
+        (item for item in destinations if item["available"]),
+        destinations[0] if destinations else None,
+    )
+    ready = initial_drive is not None and initial_drive["status"] == "complete"
+    return {
+        "drives": drives,
+        "destinations": destinations,
+        "initial_drive": initial_drive,
+        "has_drives": bool(drives),
+        "initial_drive_id": initial_drive["drive_id"] if initial_drive else "",
+        "initial_inventory_id": (
+            initial_drive["inventory_id"] if ready else ""
+        ),
+        "initial_destination": (
+            initial_destination["key"] if initial_destination else ""
+        ),
+        "initial_destination_item": initial_destination,
+        "initial_state": _import_state(initial_drive),
+        "page_sub": (
+            f"{initial_drive['label']} is ready to review."
+            if initial_drive is not None
+            else "Plug in a USB drive to review files for import."
+        ),
+        "error": None,
+    }
+
+
+def _empty_import_context(config: Config, error: str) -> dict[str, Any]:
+    destinations = _import_destinations(config)
+    return {
+        "drives": [],
+        "destinations": destinations,
+        "initial_drive": None,
+        "has_drives": False,
+        "initial_drive_id": "",
+        "initial_inventory_id": "",
+        "initial_destination": (
+            destinations[0]["key"] if destinations else ""
+        ),
+        "initial_destination_item": (
+            destinations[0] if destinations else None
+        ),
+        "initial_state": {
+            "kind": "error",
+            "title": "Live data is unavailable.",
+            "note": error,
+        },
+        "page_sub": "Import data is unavailable.",
+        "error": error,
+    }
+
+
+def _import_drives(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT d.*, "
+        "(SELECT MAX(i.id) FROM inventories i WHERE i.drive_id = d.id) "
+        "AS last_inventory_id "
+        "FROM drives d WHERE d.present = 1 ORDER BY d.id"
+    ).fetchall()
+    drives: list[dict[str, Any]] = []
+    for row in rows:
+        inventory = None
+        if row["last_inventory_id"] is not None:
+            inventory = conn.execute(
+                "SELECT * FROM inventories WHERE id = ?",
+                (row["last_inventory_id"],),
+            ).fetchone()
+        status = inventory["status"] if inventory is not None else "none"
+        if status == "complete":
+            contents = (
+                f"{int(inventory['total_files']):,} files, "
+                f"{format_bytes(inventory['total_bytes'])}"
+            )
+        elif status == "scanning":
+            contents = "Inventory scanning"
+        elif status == "failed":
+            contents = "Inventory failed"
+        elif status == "none":
+            contents = "Not inventoried"
+        else:
+            contents = f"Inventory {status}"
+        drives.append(
+            {
+                "drive_id": row["id"],
+                "label": (row["label"] or "").strip() or "Unnamed drive",
+                "serial": row["serial"] or "",
+                "mountpoint": row["mountpoint"] or "",
+                "inventory_id": inventory["id"] if inventory is not None else "",
+                "status": status,
+                "contents": contents,
+                "error": inventory["error"] if inventory is not None else None,
+                "chip": _import_drive_chip(status),
+            }
+        )
+    return drives
+
+
+def _import_state(drive: dict[str, Any] | None) -> dict[str, str]:
+    if drive is None:
+        return {
+            "kind": "no-drive",
+            "title": "No drive connected.",
+            "note": (
+                "Plug in a USB drive; it is mounted read-only and "
+                "inventoried automatically."
+            ),
+        }
+    if drive["status"] == "complete":
+        return {
+            "kind": "ready",
+            "title": "Loading the drive tree.",
+            "note": "Folders open on demand; nothing is selected yet.",
+        }
+    if drive["status"] == "scanning":
+        return {
+            "kind": "scanning",
+            "title": "Inventory is still scanning.",
+            "note": "The file tree appears here when the scan finishes.",
+        }
+    if drive["status"] == "failed":
+        return {
+            "kind": "failed",
+            "title": "Inventory failed.",
+            "note": drive["error"] or (
+                "The drive could not be read. Reconnect it to inventory it again."
+            ),
+        }
+    if drive["status"] == "none":
+        return {
+            "kind": "none",
+            "title": "No inventory yet.",
+            "note": "The file tree appears after the drive is inventoried.",
+        }
+    return {
+        "kind": "pending",
+        "title": f"Inventory {drive['status']}.",
+        "note": "The file tree appears when the inventory is complete.",
+    }
+
+
+def _import_drive_chip(status: str) -> tuple[str, str]:
+    if status == "complete":
+        return "chip-ok", "Ready"
+    if status == "scanning":
+        return "chip-info", "Scanning"
+    if status == "failed":
+        return "chip-bad", "Failed"
+    return "chip-neutral", "Not ready"
+
+
+def _import_destinations(config: Config) -> list[dict[str, Any]]:
+    ordered = sorted(
+        config.destinations.items(),
+        key=lambda item: (item[0] != "movies", item[0]),
+    )
+    destinations = []
+    for key, destination in ordered:
+        usage = _disk_usage(destination.path)
+        if usage is None:
+            destinations.append(
+                {
+                    "key": key,
+                    "name": _destination_name(key),
+                    "path": str(destination.path),
+                    "available": False,
+                    "free_bytes": 0,
+                    "total_bytes": 0,
+                    "free_text": "Space unavailable",
+                    "used_percent": 0,
+                }
+            )
+            continue
+        destinations.append(
+            {
+                "key": key,
+                "name": _destination_name(key),
+                "path": str(destination.path),
+                "available": True,
+                "free_bytes": int(usage.free),
+                "total_bytes": int(usage.total),
+                "free_text": f"{format_bytes(usage.free)} free",
+                "used_percent": _percent(usage.used, usage.total),
+            }
+        )
+    return destinations
 
 
 def _connected_drives(

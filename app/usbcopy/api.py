@@ -3,7 +3,8 @@
 Every endpoint except login and logout requires the signed session cookie.
 ``POST /api/imports`` is the only route that starts work: it validates the
 selection against the inventory, creates a review run, writes an import audit
-row, and hands the run id to the injected worker. No route changes
+row, and hands the run id to the injected worker. ``POST /api/imports/preview``
+runs the same validation and planning but writes nothing. No route changes
 configuration, deletes data, or touches the filesystem.
 """
 
@@ -14,6 +15,7 @@ import shutil
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -24,9 +26,9 @@ from starlette.concurrency import run_in_threadpool
 
 from usbcopy import __version__
 from usbcopy.auth import Session, SessionManager, verify_password
-from usbcopy.config import Config
+from usbcopy.config import Config, Destination
 from usbcopy.db import open_db
-from usbcopy.planner import PlanError, build_run_plan
+from usbcopy.planner import PlanError, RunPlan, build_run_plan, required_free_bytes
 from usbcopy.runs import create_run
 from usbcopy.web import (
     build_require_session,
@@ -62,6 +64,18 @@ ITEM_STATUSES = frozenset(
     }
 )
 EVENT_POLL_SECONDS = 1.0
+
+
+@dataclass(frozen=True)
+class _ValidatedImport:
+    """A fully validated import request, ready to preview or start."""
+
+    inventory_id: int
+    drive_id: int
+    destination: Destination
+    plan: RunPlan
+    free_bytes: int
+
 
 _DRIVE_SQL = (
     "SELECT d.*, "
@@ -162,86 +176,21 @@ def build_api_router(
                 detail="invalid CSRF token",
             )
 
-        inventory_id = payload.get("inventory_id")
-        if isinstance(inventory_id, bool) or not isinstance(inventory_id, int):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="inventory_id must be an integer",
-            )
-        inventory = conn.execute(
-            "SELECT drive_id, status FROM inventories WHERE id = ?",
-            (inventory_id,),
-        ).fetchone()
-        if inventory is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"unknown inventory: {inventory_id}",
-            )
-        if inventory["status"] != "complete":
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=(
-                    f"inventory {inventory_id} is not complete: "
-                    f"{inventory['status']}"
-                ),
-            )
-
-        destination_key = payload.get("destination")
-        destination = (
-            config.destinations.get(destination_key)
-            if isinstance(destination_key, str)
-            else None
-        )
-        if destination is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"unknown destination: {destination_key!r}",
-            )
-
-        raw_paths = payload.get("paths")
-        if (
-            not isinstance(raw_paths, list)
-            or not raw_paths
-            or any(not isinstance(path, str) for path in raw_paths)
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="paths must be a non-empty list of strings",
-            )
-
-        try:
-            free_bytes = shutil.disk_usage(destination.path).free
-            plan = build_run_plan(
-                conn,
-                inventory_id,
-                list(raw_paths),
-                destination.path,
-                free_bytes,
-            )
-        except PlanError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=str(exc),
-            ) from exc
-        except OSError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"destination unavailable: {exc}",
-            ) from exc
-
+        validated = _validate_import(payload, conn, config)
+        plan = validated.plan
         try:
             run_id = create_run(
                 conn,
-                int(inventory["drive_id"]),
-                inventory_id,
-                destination.key,
+                validated.drive_id,
+                validated.inventory_id,
+                validated.destination.key,
                 "review",
                 plan,
                 commit=False,
             )
             detail = json.dumps(
                 {
-                    "destination": destination.key,
+                    "destination": validated.destination.key,
                     "files": len(plan.items),
                     "bytes": plan.total_bytes,
                 },
@@ -259,6 +208,43 @@ def build_api_router(
 
         enqueue(run_id)
         return {"run_id": run_id}
+
+    @protected.post("/imports/preview")
+    def preview_import(
+        payload: Annotated[dict[str, Any], Depends(_request_object)],
+        conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    ) -> dict[str, Any]:
+        """Validate and plan a selection without writing anything.
+
+        The route is deliberately a POST because it carries a selection body,
+        but it is read-only: no run, run item, audit row, or enqueue happens.
+        It exists so the review page can show planned totals, duplicate
+        skips, and conflicts before the user confirms.
+        """
+        validated = _validate_import(payload, conn, config)
+        plan = validated.plan
+        skip_counts = {"exists": 0, "conflict": 0}
+        for skipped in plan.skipped:
+            skip_counts[skipped.reason] += 1
+        return {
+            "inventory_id": validated.inventory_id,
+            "destination": validated.destination.key,
+            "files": len(plan.items),
+            "bytes": plan.total_bytes,
+            "total_bytes": plan.total_bytes,
+            "free_bytes": validated.free_bytes,
+            "required_bytes": required_free_bytes(plan.total_bytes),
+            "skip_counts": skip_counts,
+            "skipped": [
+                {
+                    "path": skipped.source_rel,
+                    "dest": skipped.dest_rel,
+                    "reason": skipped.reason,
+                }
+                for skipped in plan.skipped
+            ],
+            "warnings": list(plan.warnings),
+        }
 
     @protected.get("/status")
     def read_status(
@@ -430,6 +416,89 @@ def build_api_router(
 
     router.include_router(protected)
     return router
+
+
+def _validate_import(
+    payload: dict[str, Any],
+    conn: sqlite3.Connection,
+    config: Config,
+) -> _ValidatedImport:
+    """Validate an import payload and build its read-only run plan.
+
+    Both the preview and the start endpoint call this so the UI can never
+    show a plan that the start endpoint would reject, or vice versa.
+    """
+    inventory_id = payload.get("inventory_id")
+    if isinstance(inventory_id, bool) or not isinstance(inventory_id, int):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="inventory_id must be an integer",
+        )
+    inventory = conn.execute(
+        "SELECT drive_id, status FROM inventories WHERE id = ?",
+        (inventory_id,),
+    ).fetchone()
+    if inventory is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"unknown inventory: {inventory_id}",
+        )
+    if inventory["status"] != "complete":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"inventory {inventory_id} is not complete: {inventory['status']}",
+        )
+
+    destination_key = payload.get("destination")
+    destination = (
+        config.destinations.get(destination_key)
+        if isinstance(destination_key, str)
+        else None
+    )
+    if destination is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"unknown destination: {destination_key!r}",
+        )
+
+    raw_paths = payload.get("paths")
+    if (
+        not isinstance(raw_paths, list)
+        or not raw_paths
+        or any(not isinstance(path, str) for path in raw_paths)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="paths must be a non-empty list of strings",
+        )
+
+    try:
+        free_bytes = shutil.disk_usage(destination.path).free
+        plan = build_run_plan(
+            conn,
+            inventory_id,
+            list(raw_paths),
+            destination.path,
+            free_bytes,
+        )
+    except PlanError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"destination unavailable: {exc}",
+        ) from exc
+
+    return _ValidatedImport(
+        inventory_id=inventory_id,
+        drive_id=int(inventory["drive_id"]),
+        destination=destination,
+        plan=plan,
+        free_bytes=int(free_bytes),
+    )
 
 
 def _record_login_audit(config: Config, request: Request) -> None:

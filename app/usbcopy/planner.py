@@ -190,7 +190,7 @@ def build_run_plan(
             skipped.append(SkippedItem(source_rel, dest_rel, reason))
 
     total_bytes = sum(item.size for item in items)
-    required = int(total_bytes * FREE_SPACE_FACTOR) + FREE_SPACE_MARGIN
+    required = required_free_bytes(total_bytes)
     if free_bytes < required:
         raise PlanError(f"not enough space: need {required} bytes, have {free_bytes}")
     return RunPlan(
@@ -199,6 +199,11 @@ def build_run_plan(
         warnings=warnings,
         total_bytes=total_bytes,
     )
+
+
+def required_free_bytes(total_bytes: int) -> int:
+    """Return the free space a run of ``total_bytes`` needs to start."""
+    return int(total_bytes * FREE_SPACE_FACTOR) + FREE_SPACE_MARGIN
 
 
 def _require_complete_inventory(conn: sqlite3.Connection, inventory_id: int) -> None:

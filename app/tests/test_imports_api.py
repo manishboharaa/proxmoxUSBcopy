@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -497,7 +498,9 @@ def test_default_enqueue_without_worker_logs_warning(
 
 
 def test_only_login_logout_and_imports_are_mutating(app):
-    allowed = {"/api/login", "/api/logout", "/api/imports"}
+    # /api/imports/preview is a read-only POST: it validates and plans without
+    # creating a run, writing an audit row, or enqueueing work.
+    allowed = {"/api/login", "/api/logout", "/api/imports", "/api/imports/preview"}
     mutating = {
         route.path
         for route in app.routes
@@ -505,3 +508,194 @@ def test_only_login_logout_and_imports_are_mutating(app):
         if method not in {"GET", "HEAD", "OPTIONS"}
     }
     assert mutating <= allowed
+
+
+def post_preview(client: TestClient, **overrides: object):
+    payload: dict[str, object] = {
+        "inventory_id": 1,
+        "destination": "movies",
+        "paths": ["Movies"],
+    }
+    payload.update(overrides)
+    return client.post("/api/imports/preview", json=payload)
+
+
+def audit_count(conn) -> int:
+    return int(conn.execute("SELECT COUNT(*) FROM audit").fetchone()[0])
+
+
+def test_preview_requires_authentication(
+    client: TestClient, inventory: int, conn, worker_mock: WorkerMock
+):
+    response = post_preview(client)
+    assert response.status_code == 401
+    assert run_count(conn) == 0
+    assert import_audit_count(conn) == 0
+    assert worker_mock.enqueued == []
+    assert client.post("/api/imports/preview", json=[]).status_code == 401
+
+
+def test_preview_returns_plan_without_side_effects(
+    client: TestClient,
+    login: SimpleNamespace,
+    inventory: int,
+    conn,
+    worker_mock: WorkerMock,
+):
+    audits_before = audit_count(conn)
+    response = post_preview(client)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["inventory_id"] == inventory
+    assert body["destination"] == "movies"
+    assert body["files"] == 1
+    assert body["bytes"] == 2
+    assert body["total_bytes"] == 2
+    assert body["skip_counts"] == {"exists": 0, "conflict": 0}
+    assert body["skipped"] == []
+    assert body["warnings"] == []
+    assert body["free_bytes"] == 10**9
+    assert body["required_bytes"] == int(2 * 1.02) + 256 * 1024 * 1024
+
+    assert run_count(conn) == 0
+    assert conn.execute("SELECT COUNT(*) FROM run_items").fetchone()[0] == 0
+    assert import_audit_count(conn) == 0
+    assert audit_count(conn) == audits_before
+    assert worker_mock.enqueued == []
+
+
+def test_preview_reports_skipped_reasons(
+    client: TestClient,
+    login: SimpleNamespace,
+    inventory: int,
+    conn,
+    config: Config,
+    worker_mock: WorkerMock,
+):
+    root = config.destinations["movies"].path
+    (root / "Heat (1995)").mkdir()
+    identical = root / "Heat (1995)" / "Heat.mkv"
+    identical.write_bytes(b"hi")
+    os.utime(identical, (1_700_000_000, 1_700_000_000))
+    conflict = root / "Heat.mkv"
+    conflict.write_bytes(b"different")
+    audits_before = audit_count(conn)
+
+    response = post_preview(client, paths=["Movies", "Heat.mkv"])
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["files"] == 0
+    assert body["bytes"] == 0
+    assert body["skip_counts"] == {"exists": 1, "conflict": 1}
+    skipped = {(item["path"], item["reason"]) for item in body["skipped"]}
+    assert skipped == {
+        ("Movies/Heat (1995)/Heat.mkv", "exists"),
+        ("Heat.mkv", "conflict"),
+    }
+    assert run_count(conn) == 0
+    assert import_audit_count(conn) == 0
+    assert audit_count(conn) == audits_before
+    assert worker_mock.enqueued == []
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"inventory_id": 999},
+        {"inventory_id": True},
+        {"destination": "music"},
+        {"destination": None},
+        {"paths": []},
+        {"paths": "Movies"},
+        {"paths": [1]},
+        {"paths": ["../../etc/passwd"]},
+        {"paths": ["NotInTheInventory"]},
+    ],
+)
+def test_preview_validates_like_import(
+    client: TestClient,
+    login: SimpleNamespace,
+    inventory: int,
+    conn,
+    worker_mock: WorkerMock,
+    overrides: dict[str, object],
+):
+    response = post_preview(client, **overrides)
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], str)
+    assert response.json()["detail"]
+    assert run_count(conn) == 0
+    assert import_audit_count(conn) == 0
+    assert worker_mock.enqueued == []
+
+
+def test_preview_rejects_incomplete_inventory(
+    client: TestClient,
+    login: SimpleNamespace,
+    inventory: int,
+    conn,
+    worker_mock: WorkerMock,
+):
+    conn.execute(
+        "UPDATE inventories SET status = 'scanning' WHERE id = ?", (inventory,)
+    )
+    conn.commit()
+
+    response = post_preview(client, inventory_id=inventory)
+    assert response.status_code == 422
+    assert "not complete" in response.json()["detail"]
+    assert run_count(conn) == 0
+    assert worker_mock.enqueued == []
+
+
+def test_preview_rejects_malformed_body(
+    client: TestClient, login: SimpleNamespace, inventory: int, conn
+):
+    assert client.post("/api/imports/preview", json=[]).status_code == 422
+    assert (
+        client.post(
+            "/api/imports/preview",
+            content=b"not json",
+            headers={"content-type": "application/json"},
+        ).status_code
+        == 422
+    )
+    assert run_count(conn) == 0
+
+
+def test_preview_rejects_insufficient_free_space(
+    client: TestClient,
+    login: SimpleNamespace,
+    inventory: int,
+    conn,
+    worker_mock: WorkerMock,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        api.shutil,
+        "disk_usage",
+        lambda path: SimpleNamespace(total=100, used=99, free=1),
+    )
+    response = post_preview(client)
+    assert response.status_code == 422
+    assert "not enough space" in response.json()["detail"]
+    assert run_count(conn) == 0
+    assert import_audit_count(conn) == 0
+    assert worker_mock.enqueued == []
+
+
+def test_preview_does_not_require_csrf(
+    client: TestClient, login: SimpleNamespace, inventory: int
+):
+    response = client.post(
+        "/api/imports/preview",
+        json={
+            "inventory_id": inventory,
+            "destination": "movies",
+            "paths": ["Movies"],
+            "csrf": "wrong-on-purpose",
+        },
+    )
+    assert response.status_code == 200
