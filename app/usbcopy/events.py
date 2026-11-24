@@ -93,7 +93,7 @@ def parse_event(path: Path) -> DriveEvent:
     path = Path(path)
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise EventError(f"cannot read event file {path}: {exc}") from exc
     try:
         payload = json.loads(raw)

@@ -438,6 +438,15 @@ def test_process_pending_keeps_event_file_when_callback_fails(conn, tmp_path: Pa
     assert drive_row(conn, "ABCD-1234")["present"] == 1
 
 
+def test_process_pending_quarantines_non_utf8_event_file(conn, tmp_path: Path):
+    bad = tmp_path / "binary.json"
+    bad.write_bytes(b"\xff\xfe")
+
+    assert process_pending(conn, tmp_path) == 0
+    assert (tmp_path / "bad" / "binary.json").exists()
+    assert not bad.exists()
+
+
 def test_process_pending_quarantine_preserves_bad_file_content(conn, tmp_path: Path):
     bad = tmp_path / "broken.json"
     bad.write_text("{nope", encoding="utf-8")
