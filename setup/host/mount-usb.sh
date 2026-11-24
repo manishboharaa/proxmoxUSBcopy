@@ -26,6 +26,7 @@ Options:
   --fs-type TYPE       ext2|ext3|ext4|vfat|exfat|ntfs; derived with blkid
   --mount-root PATH    Mount root (default: $DEFAULT_MOUNT_ROOT)
   --spool PATH         Event spool (default: $DEFAULT_SPOOL)
+  --state-dir PATH     Mount state directory (default: $DEFAULT_STATE_DIR)
   --dry-run            Print the mount command and event JSON only
   -h, --help           Show this help
 EOF
@@ -43,6 +44,14 @@ log() {
 require_command() {
     local name=$1
     command -v "$name" >/dev/null 2>&1 || die "required command not found: $name"
+}
+
+require_root() {
+    ((EUID == 0)) || die "must be run as root"
+}
+
+is_block_device() {
+    [[ -b $1 ]]
 }
 
 validate_absolute_path() {
@@ -144,183 +153,284 @@ write_event() {
     printf '%s\n' "$payload"
 }
 
-device=''
-uuid=''
-label=''
-serial=''
-fs_type=''
-mount_root=$DEFAULT_MOUNT_ROOT
-spool=$DEFAULT_SPOOL
-state_dir=$DEFAULT_STATE_DIR
-dry_run=0
-have_label=0
-have_serial=0
+release_mount() {
+    local path=$1
+    local attempt
 
-while (($# > 0)); do
-    case "$1" in
-        --device)
-            (($# >= 2)) || die "--device requires a value"
-            device=$2
-            shift 2
-            ;;
-        --uuid)
-            (($# >= 2)) || die "--uuid requires a value"
-            uuid=$2
-            shift 2
-            ;;
-        --label)
-            (($# >= 2)) || die "--label requires a value"
-            label=$2
-            have_label=1
-            shift 2
-            ;;
-        --serial)
-            (($# >= 2)) || die "--serial requires a value"
-            serial=$2
-            have_serial=1
-            shift 2
-            ;;
-        --fs-type)
-            (($# >= 2)) || die "--fs-type requires a value"
-            fs_type=$2
-            shift 2
-            ;;
-        --mount-root)
-            (($# >= 2)) || die "--mount-root requires a value"
-            mount_root=$2
-            shift 2
-            ;;
-        --spool)
-            (($# >= 2)) || die "--spool requires a value"
-            spool=$2
-            shift 2
-            ;;
-        --dry-run)
-            dry_run=1
-            shift
-            ;;
-        -h | --help)
-            usage
-            exit 0
-            ;;
-        *)
-            die "unknown argument: $1"
+    for attempt in 1 2 3; do
+        if umount -- "$path" 2>/dev/null; then
+            return 0
+        fi
+        log "unmount attempt $attempt failed for $path"
+        if ((attempt < 3)); then
+            sleep 1 || true
+        fi
+    done
+    log "forcing lazy unmount of $path"
+    if umount -l -- "$path" 2>/dev/null; then
+        return 0
+    fi
+    log "lazy unmount failed for $path"
+    return 1
+}
+
+mount_matches_device() {
+    local target=$1
+    local source=$2
+    local fstype=$3
+    local expected
+    local actual
+
+    [[ $target == "$mountpoint" ]] || return 1
+    [[ ${fstype,,} == "$fs_type" ]] || return 1
+    [[ -n $source ]] || return 1
+    expected=$(readlink -f -- "$device" 2>/dev/null || printf '%s' "$device")
+    actual=$(readlink -f -- "$source" 2>/dev/null || printf '%s' "$source")
+    [[ $actual == "$expected" ]] || return 1
+    [[ -d $mountpoint ]] && ls -- "$mountpoint" >/dev/null 2>&1
+}
+
+publish_add() {
+    if ! write_state; then
+        log "error: could not record mount state for $device; refusing to start"
+        release_mount "$mountpoint" || log "warning: could not release $mountpoint"
+        rmdir -- "$mountpoint" 2>/dev/null || true
+        return 1
+    fi
+    if ! write_event add; then
+        rm -f -- "$state_dir/${device##*/}"
+        release_mount "$mountpoint" || log "warning: could not release $mountpoint"
+        rmdir -- "$mountpoint" 2>/dev/null || true
+        return 1
+    fi
+}
+
+main() {
+    local device=''
+    local uuid=''
+    local label=''
+    local serial=''
+    local fs_type=''
+    local mount_root=$DEFAULT_MOUNT_ROOT
+    local spool=$DEFAULT_SPOOL
+    local state_dir=$DEFAULT_STATE_DIR
+    local dry_run=0
+    local have_label=0
+    local have_serial=0
+    local block_info=''
+    local dev_properties=''
+    local supported=0
+    local candidate=''
+    local existing_target=''
+    local existing_source=''
+    local existing_fs=''
+    local targets=()
+    local fields=()
+
+    while (($# > 0)); do
+        case "$1" in
+            --device)
+                (($# >= 2)) || die "--device requires a value"
+                device=$2
+                shift 2
+                ;;
+            --uuid)
+                (($# >= 2)) || die "--uuid requires a value"
+                uuid=$2
+                shift 2
+                ;;
+            --label)
+                (($# >= 2)) || die "--label requires a value"
+                label=$2
+                have_label=1
+                shift 2
+                ;;
+            --serial)
+                (($# >= 2)) || die "--serial requires a value"
+                serial=$2
+                have_serial=1
+                shift 2
+                ;;
+            --fs-type)
+                (($# >= 2)) || die "--fs-type requires a value"
+                fs_type=$2
+                shift 2
+                ;;
+            --mount-root)
+                (($# >= 2)) || die "--mount-root requires a value"
+                mount_root=$2
+                shift 2
+                ;;
+            --spool)
+                (($# >= 2)) || die "--spool requires a value"
+                spool=$2
+                shift 2
+                ;;
+            --state-dir)
+                (($# >= 2)) || die "--state-dir requires a value"
+                state_dir=$2
+                shift 2
+                ;;
+            --dry-run)
+                dry_run=1
+                shift
+                ;;
+            -h | --help)
+                usage
+                exit 0
+                ;;
+            *)
+                die "unknown argument: $1"
+                ;;
+        esac
+    done
+
+    [[ -n $device ]] || die "--device is required"
+    [[ $device =~ ^/dev/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+        || die "invalid device path (expected a single /dev node): $device"
+    validate_absolute_path "$mount_root" "--mount-root"
+    validate_absolute_path "$spool" "--spool"
+    validate_absolute_path "$state_dir" "--state-dir"
+    require_command python3
+
+    if [[ -z $uuid || -z $fs_type || $have_label -eq 0 ]]; then
+        if command -v blkid >/dev/null 2>&1; then
+            block_info=$(blkid -o export -- "$device" 2>/dev/null || true)
+            while IFS='=' read -r key value; do
+                case "$key" in
+                    UUID)
+                        if [[ -z $uuid ]]; then
+                            uuid=$value
+                        fi
+                        ;;
+                    LABEL)
+                        if [[ $have_label -eq 0 ]]; then
+                            label=$value
+                        fi
+                        ;;
+                    TYPE)
+                        if [[ -z $fs_type ]]; then
+                            fs_type=$value
+                        fi
+                        ;;
+                esac
+            done <<<"$block_info"
+        fi
+    fi
+
+    if [[ $have_serial -eq 0 && -z $serial ]] && command -v udevadm >/dev/null 2>&1; then
+        dev_properties=$(udevadm info --query=property --name="$device" 2>/dev/null || true)
+        while IFS='=' read -r key value; do
+            if [[ $key == ID_SERIAL_SHORT && -z $serial ]]; then
+                serial=$value
+            fi
+        done <<<"$dev_properties"
+    fi
+
+    [[ -n $fs_type ]] || die "cannot determine filesystem type for $device; pass --fs-type"
+    fs_type=${fs_type,,}
+
+    for candidate in "${SUPPORTED_FS[@]}"; do
+        if [[ $fs_type == "$candidate" ]]; then
+            supported=1
+        fi
+    done
+    ((supported == 1)) \
+        || die "unsupported filesystem on $device: $fs_type (supported: ${SUPPORTED_FS[*]})"
+
+    if [[ -z $uuid ]]; then
+        uuid=${device##*/}
+    fi
+    validate_uuid "$uuid"
+
+    mountpoint="${mount_root%/}/$uuid"
+    options='ro,nosuid,nodev,noexec'
+    case "$fs_type" in
+        exfat | vfat | ntfs)
+            options+=',umask=022'
             ;;
     esac
-done
 
-[[ -n $device ]] || die "--device is required"
-[[ $device =~ ^/dev/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
-    || die "invalid device path (expected a single /dev node): $device"
-validate_absolute_path "$mount_root" "--mount-root"
-validate_absolute_path "$spool" "--spool"
-require_command python3
-
-if [[ -z $uuid || -z $fs_type || $have_label -eq 0 ]]; then
-    if command -v blkid >/dev/null 2>&1; then
-        block_info=$(blkid -o export -- "$device" 2>/dev/null || true)
-        while IFS='=' read -r key value; do
-            case "$key" in
-                UUID)
-                    if [[ -z $uuid ]]; then
-                        uuid=$value
-                    fi
-                    ;;
-                LABEL)
-                    if [[ $have_label -eq 0 ]]; then
-                        label=$value
-                    fi
-                    ;;
-                TYPE)
-                    if [[ -z $fs_type ]]; then
-                        fs_type=$value
-                    fi
-                    ;;
-            esac
-        done <<<"$block_info"
+    if ((dry_run == 1)); then
+        timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        printf 'mount -o %s -t %s -- %s %s\n' "$options" "$fs_type" "$device" "$mountpoint"
+        event_json add "$timestamp"
+        exit 0
     fi
-fi
 
-if [[ $have_serial -eq 0 && -z $serial ]] && command -v udevadm >/dev/null 2>&1; then
-    dev_properties=$(udevadm info --query=property --name="$device" 2>/dev/null || true)
-    while IFS='=' read -r key value; do
-        if [[ $key == ID_SERIAL_SHORT && -z $serial ]]; then
-            serial=$value
-        fi
-    done <<<"$dev_properties"
-fi
+    require_root
+    require_command findmnt
+    is_block_device "$device" || die "not a block device: $device"
 
-[[ -n $fs_type ]] || die "cannot determine filesystem type for $device; pass --fs-type"
-fs_type=${fs_type,,}
-
-supported=0
-for candidate in "${SUPPORTED_FS[@]}"; do
-    if [[ $fs_type == "$candidate" ]]; then
-        supported=1
-    fi
-done
-((supported == 1)) \
-    || die "unsupported filesystem on $device: $fs_type (supported: ${SUPPORTED_FS[*]})"
-
-if [[ -z $uuid ]]; then
-    uuid=${device##*/}
-fi
-validate_uuid "$uuid"
-
-mountpoint="${mount_root%/}/$uuid"
-options='ro,nosuid,nodev,noexec'
-case "$fs_type" in
-    exfat | vfat | ntfs)
-        options+=',umask=022'
-        ;;
-esac
-
-if ((dry_run == 1)); then
-    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    printf 'mount -o %s -t %s -- %s %s\n' "$options" "$fs_type" "$device" "$mountpoint"
-    event_json add "$timestamp"
-    exit 0
-fi
-
-((EUID == 0)) || die "must be run as root"
-
-[[ -b $device ]] || die "not a block device: $device"
-
-if command -v findmnt >/dev/null 2>&1; then
-    existing_targets=()
-    mapfile -t existing_targets < <(
+    targets=()
+    mapfile -t targets < <(
         findmnt --noheadings --output TARGET --source "$device" 2>/dev/null || true
     )
-    existing_target=${existing_targets[0]:-}
-    if [[ -n $existing_target ]]; then
-        if [[ $existing_target == "$mountpoint" ]]; then
-            log "already mounted at $mountpoint; nothing to do"
+    if ((${#targets[@]} > 0)); then
+        existing_target=''
+        for candidate in "${targets[@]}"; do
+            if [[ $candidate == "$mountpoint" ]]; then
+                existing_target=$candidate
+                break
+            fi
+        done
+        if [[ -z $existing_target ]]; then
+            existing_target=${targets[0]}
+        fi
+
+        fields=()
+        mapfile -t fields < <(
+            findmnt --noheadings --output SOURCE --mountpoint "$existing_target" 2>/dev/null || true
+        )
+        existing_source=${fields[0]:-}
+        fields=()
+        mapfile -t fields < <(
+            findmnt --noheadings --output FSTYPE --mountpoint "$existing_target" 2>/dev/null || true
+        )
+        existing_fs=${fields[0]:-}
+
+        if mount_matches_device "$existing_target" "$existing_source" "$existing_fs"; then
+            log "validated existing mount of $device at $mountpoint"
+            if ! publish_add; then
+                die "could not publish add event for existing mount at $mountpoint"
+            fi
             exit 0
         fi
-        die "device $device is already mounted at $existing_target"
+
+        if [[ $existing_target != "$mountpoint" \
+            && $existing_target != "${mount_root%/}/"* ]]; then
+            die "device $device is mounted outside mount root at $existing_target"
+        fi
+
+        log "stale mount for $device at $existing_target; unmounting and remounting"
+        if ! release_mount "$existing_target"; then
+            die "could not release stale mount at $existing_target"
+        fi
+        if [[ $existing_target != "$mountpoint" ]]; then
+            rmdir -- "$existing_target" 2>/dev/null \
+                || log "warning: stale mountpoint is not empty: $existing_target"
+        fi
     fi
-fi
-if command -v mountpoint >/dev/null 2>&1 && mountpoint -q -- "$mountpoint"; then
-    die "mountpoint is already in use: $mountpoint"
-fi
 
-mkdir -p -- "$mount_root"
-mkdir -p -- "$mountpoint"
+    if command -v mountpoint >/dev/null 2>&1 && mountpoint -q -- "$mountpoint"; then
+        die "mountpoint is already in use: $mountpoint"
+    fi
 
-rm -f -- "$state_dir/${device##*/}" 2>/dev/null || true
+    mkdir -p -- "$mount_root"
+    mkdir -p -- "$mountpoint"
 
-if ! mount -o "$options" -t "$fs_type" -- "$device" "$mountpoint"; then
-    rmdir -- "$mountpoint" 2>/dev/null || true
-    die "mount failed: $device on $mountpoint"
-fi
+    rm -f -- "$state_dir/${device##*/}" 2>/dev/null || true
 
-if ! write_state; then
-    log "warning: could not record mount state; stop will rely on findmnt"
-fi
+    if ! mount -o "$options" -t "$fs_type" -- "$device" "$mountpoint"; then
+        rmdir -- "$mountpoint" 2>/dev/null || true
+        die "mount failed: $device on $mountpoint"
+    fi
 
-if ! write_event add; then
-    rm -f -- "$state_dir/${device##*/}"
-    umount -- "$mountpoint" 2>/dev/null || true
-    rmdir -- "$mountpoint" 2>/dev/null || true
-    die "could not write add event to $spool"
+    if ! publish_add; then
+        die "could not publish add event for $device at $mountpoint"
+    fi
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
 fi
