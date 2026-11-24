@@ -286,7 +286,7 @@ proxmoxUSBcopy/
 
 - `destinations(id, name, path_in_ct, path_on_host, is_default, created_at)`
 - `drives(id, uuid, label, serial, fs_type, mountpoint, first_seen, last_seen, present)`
-- `events(id, ts, action, drive_id, payload_json, processed)`
+- `events(id, ts, level, action, drive_id, payload_json, processed)` — `level`: info/warning/error
 - `inventories(id, drive_id, root, status, started_at, finished_at, total_files, total_bytes, error)`
 - `inventory_entries(id, inventory_id, rel_path, parent_path, is_dir, size, mtime, kind, media_hint, duplicate_state)` — `kind`: video/other; `duplicate_state`: none/exists/conflict
 - `runs(id, drive_id, inventory_id, destination_id, mode, status, started_at, finished_at, files_total, bytes_total, bytes_done, error)`

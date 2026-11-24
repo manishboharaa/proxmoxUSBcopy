@@ -273,7 +273,7 @@ def open_db(path: Path) -> sqlite3.Connection   # row_factory=sqlite3.Row, WAL, 
 def init_db(conn: sqlite3.Connection) -> None   # idempotent; stores schema_version
 def table_names(conn: sqlite3.Connection) -> set[str]
 ```
-Tables exactly per DESIGN §12, including `drives.mountpoint` and `run_items.temp_path`. Indexes: `run_items(run_id)`, `runs(status)`, `inventory_entries(inventory_id, parent_path)`, `drives(present)`.
+Tables exactly per DESIGN §12, including `drives.mountpoint`, `run_items.temp_path`, and `events.level`. Indexes: `run_items(run_id)`, `runs(status)`, `inventory_entries(inventory_id, parent_path)`, `drives(present)`.
 
 - [ ] **Step 1: Write failing tests**
 
