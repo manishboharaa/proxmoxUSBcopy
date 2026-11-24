@@ -3,13 +3,15 @@
 This module is the only place that writes user data. The source is opened
 read-only and is never renamed, deleted, or had its mode or timestamps
 changed. Data is streamed into a uniquely named temporary file in the
-destination directory, verified, fsynced, and then atomically moved to the
-final name. A failure never leaves a partial file under the final name.
+destination directory, verified, fsynced, and then atomically published under
+the final name without overwriting an existing destination. A failure never
+leaves a partial file under the final name.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import uuid
 from dataclasses import dataclass
@@ -19,6 +21,8 @@ DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
 _VERIFY_CHUNK_SIZE = 1024 * 1024
 _FILE_MODE = 0o644
 _TEMP_TEMPLATE = ".usbcopy.{token}.part"
+
+logger = logging.getLogger(__name__)
 
 
 class CopyError(Exception):
@@ -58,6 +62,27 @@ def _temp_path(destination: Path) -> Path:
     return destination.parent / name
 
 
+def _publish(temp_path: Path, destination: Path) -> None:
+    """Publish the temp file without ever replacing an existing entry.
+
+    ``os.link`` fails atomically with ``FileExistsError`` when the destination
+    name exists, unlike ``os.replace`` which would silently replace it.
+    """
+    try:
+        os.link(temp_path, destination)
+    except FileExistsError as exc:
+        raise CopyError(f"destination already exists: {destination}") from exc
+    try:
+        os.unlink(temp_path)
+    except OSError:
+        logger.warning(
+            "published %s but could not remove temporary file %s",
+            destination,
+            temp_path,
+            exc_info=True,
+        )
+
+
 def copy_file(
     source: Path,
     destination: Path,
@@ -70,9 +95,9 @@ def copy_file(
 
     The destination must not already exist. The copy is written to a
     ``.usbcopy.<uuid>.part`` file in the destination directory, fsynced, and
-    verified before ``os.replace`` publishes it. Any failure removes the
-    temporary file and re-raises; the destination name is never left holding
-    partial content.
+    verified. Metadata is applied to the temp file, which is then published
+    with a no-overwrite hard link. Any failure removes the temporary file and
+    re-raises; the destination name is never left holding partial content.
     """
     source = Path(source)
     destination = Path(destination)
@@ -115,18 +140,24 @@ def copy_file(
         if verify_sha256:
             _verify(temp_path, digest.hexdigest())
 
-        if os.path.lexists(destination):
-            raise CopyError(f"destination already exists: {destination}")
-
-        os.replace(temp_path, destination)
-        _fsync_directory(destination.parent)
-
         if preserve_mtime:
             os.utime(
-                destination,
+                temp_path,
                 ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns),
             )
-        os.chmod(destination, _FILE_MODE)
+        os.chmod(temp_path, _FILE_MODE)
+
+        _publish(temp_path, destination)
+
+        try:
+            _fsync_directory(destination.parent)
+        except OSError:
+            logger.warning(
+                "published %s but could not fsync directory %s",
+                destination,
+                destination.parent,
+                exc_info=True,
+            )
     except BaseException:
         temp_path.unlink(missing_ok=True)
         raise

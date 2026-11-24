@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import stat
 from dataclasses import FrozenInstanceError, fields
@@ -97,3 +98,83 @@ def test_rejects_non_positive_chunk_size(src, dst):
         copy_file(src, dst, chunk_size=0)
     assert not dst.exists()
     assert list(dst.parent.glob(".usbcopy.*.part")) == []
+
+
+def test_publish_race_refuses_existing_destination(src, dst, monkeypatch):
+    real_publish = copier._publish
+
+    def _create_then_publish(temp_path, destination):
+        destination.write_text("raced")
+        real_publish(temp_path, destination)
+
+    monkeypatch.setattr(copier, "_publish", _create_then_publish)
+    with pytest.raises(CopyError, match="exists"):
+        copy_file(src, dst)
+    assert dst.read_text() == "raced"
+    assert list(dst.parent.glob(".usbcopy.*.part")) == []
+
+
+def test_directory_fsync_failure_still_returns_success(src, dst, monkeypatch, caplog):
+    def _boom(directory):
+        raise OSError("fsync failed")
+
+    monkeypatch.setattr(copier, "_fsync_directory", _boom)
+    with caplog.at_level(logging.WARNING, logger="usbcopy.copier"):
+        result = copy_file(src, dst)
+
+    assert dst.read_bytes() == b"payload"
+    assert result.bytes_copied == len(b"payload")
+    assert result.sha256 == hashlib.sha256(b"payload").hexdigest()
+    assert "fsync" in caplog.text.lower()
+
+
+def test_verify_detects_hash_mismatch(tmp_path):
+    path = tmp_path / "verified.bin"
+    path.write_bytes(b"hello world")
+    with pytest.raises(CopyError, match="hash mismatch"):
+        copier._verify(path, "0" * 64)
+
+
+def test_verify_receives_temp_path_and_source_digest(src, dst, monkeypatch):
+    payload = b"spy payload"
+    src.write_bytes(payload)
+    seen = {}
+    real_verify = copier._verify
+
+    def _spy(path, expected_sha256):
+        seen["path"] = Path(path)
+        seen["sha256"] = expected_sha256
+        real_verify(path, expected_sha256)
+
+    monkeypatch.setattr(copier, "_verify", _spy)
+    result = copy_file(src, dst)
+
+    temp_path = seen["path"]
+    assert temp_path.parent == dst.parent
+    assert temp_path.name.startswith(".usbcopy.")
+    assert temp_path.name.endswith(".part")
+    assert seen["sha256"] == hashlib.sha256(payload).hexdigest() == result.sha256
+    assert not temp_path.exists()
+
+
+def test_verify_disabled_skips_verification(src, dst, monkeypatch):
+    calls = []
+
+    def _fail(*args, **kwargs):
+        calls.append(args)
+        raise CopyError("hash mismatch")
+
+    monkeypatch.setattr(copier, "_verify", _fail)
+    result = copy_file(src, dst, verify_sha256=False)
+
+    assert calls == []
+    assert dst.read_bytes() == b"payload"
+    assert result.bytes_copied == len(b"payload")
+
+
+def test_preserve_mtime_false_does_not_force_mtime(src, dst):
+    src.write_bytes(b"no mtime")
+    os.utime(src, (1_700_000_000, 1_700_000_000))
+    copy_file(src, dst, preserve_mtime=False)
+    assert dst.read_bytes() == b"no mtime"
+    assert int(dst.stat().st_mtime) != 1_700_000_000
