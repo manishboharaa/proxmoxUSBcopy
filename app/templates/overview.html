@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+
+{% block content %}
+<div class="page-head" id="top">
+  <div>
+    <h1>Overview</h1>
+    <p class="page-sub">{{ page_sub }}</p>
+  </div>
+  <div class="page-meta">
+    <span class="chip chip-neutral">Read-only</span>
+    <span class="stamp">
+      <svg width="14" height="14" aria-hidden="true"><use href="#i-clock"></use></svg>
+      <span class="mono">{{ now_text }}</span>
+    </span>
+  </div>
+</div>
+
+{% if error %}
+<div class="panel banner-error" role="alert">{{ error }}</div>
+{% endif %}
+
+<section class="panel drive-bay" id="drive-bay" aria-labelledby="drive-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="drive-title">Connected drives</h2>
+      <p class="panel-sub">{{ drive_note }}</p>
+    </div>
+    <span class="chip {{ drive_chip[0] }}">{{ drive_chip[1] }}</span>
+  </div>
+  {% if drives %}
+  <div class="drive-list">
+    {% for drive in drives %}
+    <article class="drive-card">
+      <div class="drive-id">
+        <span class="drive-mark">
+          <svg width="22" height="22" aria-hidden="true"><use href="#i-usb"></use></svg>
+        </span>
+        <div>
+          <p class="drive-label">{{ drive.label }}</p>
+          <p class="drive-sub">{{ drive.sub }}</p>
+        </div>
+      </div>
+      <dl class="facts">
+        {% for fact in drive.facts %}
+        <div>
+          <dt>{{ fact.label }}</dt>
+          <dd{% if fact.mono %} class="mono"{% endif %}>{{ fact.value }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+      {% if drive.capacity %}
+      <div class="capacity">
+        <div class="capacity-head">
+          <span>Drive usage</span>
+          <span class="mono">{{ drive.capacity.head_right }}</span>
+        </div>
+        <div class="blocks blocks-drive" role="img" aria-label="{{ drive.capacity.label }}">
+          {% for cls in drive.capacity.blocks %}<span class="blk {{ cls }}"></span>{% endfor %}
+        </div>
+        <div class="capacity-foot">
+          <span>{{ drive.capacity.used_text }}</span>
+          <span>{{ drive.capacity.free_text }}</span>
+        </div>
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">
+    <p class="empty-title">No drive connected.</p>
+    <p class="empty-note">Plug in a USB drive; it is mounted read-only and inventoried automatically.</p>
+  </div>
+  {% endif %}
+</section>
+
+<div class="kpi-grid" aria-label="Key numbers">
+  {% for kpi in kpis %}
+  <article class="panel kpi{% if kpi.attention %} kpi-attention{% endif %}">
+    <p class="kpi-label">
+      {% if kpi.attention %}
+      <svg class="kpi-alert" width="14" height="14" aria-hidden="true"><use href="#i-alert"></use></svg>
+      {% endif %}
+      {{ kpi.label }}
+    </p>
+    <p class="kpi-value">{{ kpi.value }}{% if kpi.unit %}<span class="kpi-unit">{{ kpi.unit }}</span>{% endif %}</p>
+    <p class="kpi-note">{{ kpi.note }}</p>
+  </article>
+  {% endfor %}
+</div>
+
+<section class="panel active" aria-labelledby="active-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="active-title">Copying now</h2>
+      <p class="panel-sub">{{ active.sub if active else "No transfer is running." }}</p>
+    </div>
+    {% if active %}
+    <span class="chip chip-live"><span class="led" aria-hidden="true"></span>Running</span>
+    {% else %}
+    <span class="chip chip-neutral">Idle</span>
+    {% endif %}
+  </div>
+  {% if active %}
+  <div class="active-body">
+    <div class="active-main">
+      <p class="active-dest">
+        <svg width="14" height="14" aria-hidden="true"><use href="#{{ active.icon }}"></use></svg>
+        {{ active.destination }}
+      </p>
+      <h3 class="active-name">{{ active.name }}</h3>
+      <p class="active-file mono">{{ active.file }}</p>
+      <div class="blocks blocks-progress" role="progressbar" aria-label="Copy progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ active.percent }}">
+        {% for cls in active.blocks %}<span class="blk {{ cls }}"></span>{% endfor %}
+      </div>
+      <div class="progress-meta">
+        <span class="mono">{{ active.done_text }} of {{ active.total_text }}</span>
+        <span class="mono">{{ active.percent }}%</span>
+      </div>
+    </div>
+    <div class="active-side">
+      <p class="percent">{{ active.percent }}<span class="percent-sign">%</span></p>
+      <p class="percent-label">of this run</p>
+      <p class="spark-label active-remaining">{{ active.remaining_text }} remaining</p>
+    </div>
+  </div>
+  <div class="active-foot">
+    <span>{{ active.foot }}</span>
+    <span class="mono">Run {{ active.run_id }}</span>
+  </div>
+  {% else %}
+  <div class="empty">
+    <p class="empty-title">No transfer is running.</p>
+    <p class="empty-note">Queued imports start here automatically when a drive is mounted.</p>
+  </div>
+  {% endif %}
+</section>
+
+<aside class="panel queue" aria-labelledby="queue-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="queue-title">Queue</h2>
+      <p class="panel-sub">Copies run one at a time.</p>
+    </div>
+    <span class="chip {% if queue %}chip-info{% else %}chip-neutral{% endif %}">{{ queue_chip }}</span>
+  </div>
+  {% if queue %}
+  <ol class="queue-list">
+    {% for item in queue %}
+    <li class="queue-item">
+      <div class="queue-top">
+        <span class="queue-id mono">#{{ item.run_id }}</span>
+        <span class="chip chip-info">Queued</span>
+      </div>
+      <p class="queue-name">
+        <svg width="14" height="14" aria-hidden="true"><use href="#{{ item.icon }}"></use></svg>
+        {{ item.destination }}
+      </p>
+      <p class="queue-meta">{{ item.meta }}</p>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="queue-note">The drive stays mounted until its queue is clear. Removing it interrupts the active run.</p>
+  {% else %}
+  <div class="empty">
+    <p class="empty-title">Queue is empty.</p>
+    <p class="empty-note">New import runs appear here before they start copying.</p>
+  </div>
+  {% endif %}
+</aside>
+
+<section class="panel destinations" aria-labelledby="destinations-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="destinations-title">Library space</h2>
+      <p class="panel-sub">Checked before every import.</p>
+    </div>
+    <span class="chip {{ destinations_chip[0] }}">{{ destinations_chip[1] }}</span>
+  </div>
+  <div class="dest-grid">
+  {% for destination in destinations %}
+  <div class="dest-row">
+    <div class="dest-head">
+      <span class="dest-name">{{ destination.name }}</span>
+      <span class="mono dest-free">{{ destination.free_text }}</span>
+    </div>
+    <p class="dest-path mono">{{ destination.path }}</p>
+    <div class="meter" role="img" aria-label="{{ destination.name }} library is {{ destination.percent }} percent full">
+      <span style="width: {{ destination.percent }}%"></span>
+    </div>
+    <p class="dest-foot">
+      {% if destination.available %}{{ destination.used_text }} of {{ destination.total_text }} used{% else %}Space is not readable right now.{% endif %}
+    </p>
+  </div>
+  {% endfor %}
+  </div>
+  {% if destinations_chip[1] == "Writable" %}
+  <div class="space-check">
+    <svg width="16" height="16" aria-hidden="true"><use href="#i-check"></use></svg>
+    <div>
+      <p class="space-check-title">Free space is read live</p>
+      <p class="space-check-note">Each import is checked against the destination free space before it starts.</p>
+    </div>
+  </div>
+  {% endif %}
+  <div class="rules">
+    <p class="rules-title">Copy rules</p>
+    <p class="rules-line">Same size and mtime: skipped as already copied.</p>
+    <p class="rules-line">Different size or mtime: conflict, never overwritten.</p>
+  </div>
+</section>
+
+<section class="panel runs" id="recent-runs" aria-labelledby="runs-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="runs-title">Recent runs</h2>
+      <p class="panel-sub">History stays after the source drive is gone.</p>
+    </div>
+    <span class="chip chip-neutral">{{ runs_chip }}</span>
+  </div>
+  {% if runs %}
+  <div class="table-wrap">
+    <table class="runs-table">
+      <caption class="sr-only">Recent import runs</caption>
+      <thead>
+        <tr>
+          <th scope="col">Run</th>
+          <th scope="col">Drive</th>
+          <th scope="col">Destination</th>
+          <th scope="col" class="num">Files</th>
+          <th scope="col" class="num">Size</th>
+          <th scope="col" class="num">Duration</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="finished">Finished</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td class="mono">#{{ run.run_id }}</td>
+          <td>{{ run.drive }}</td>
+          <td>{{ run.destination }}</td>
+          <td class="num mono">{{ run.files }}</td>
+          <td class="num mono">{{ run.size }}</td>
+          <td class="num mono">{{ run.duration }}</td>
+          <td><span class="chip {{ run.chip }}">{{ run.status }}</span></td>
+          <td class="mono finished">{{ run.finished }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    <p class="empty-title">No recent runs.</p>
+    <p class="empty-note">Completed and failed imports appear here with their full history.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

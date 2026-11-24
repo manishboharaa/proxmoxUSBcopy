@@ -29,6 +29,7 @@ from usbcopy.events import (
 )
 from usbcopy.pipeline import handle_drive_added
 from usbcopy.runs import recover_orphaned_runs
+from usbcopy.web import build_page_router, build_template_context
 from usbcopy.worker import RunWorker
 
 logger = logging.getLogger(__name__)
@@ -311,11 +312,17 @@ def create_app(
     app.state.worker = worker
     app.state.watcher = None
     app.state.startup_stats = None
-    app.state.templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+    app.state.templates = Jinja2Templates(
+        directory=str(APP_DIR / "templates"),
+        context_processors=[build_template_context(session_manager)],
+    )
     app.mount(
         "/static",
         StaticFiles(directory=str(APP_DIR / "static")),
         name="static",
+    )
+    app.include_router(
+        build_page_router(config, session_manager, app.state.templates)
     )
     app.include_router(
         build_api_router(config, session_manager, enqueue_run=api_enqueue)
