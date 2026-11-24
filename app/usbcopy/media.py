@@ -30,8 +30,8 @@ VIDEO_EXTENSIONS: frozenset[str] = frozenset(
 
 TV_PATTERN: re.Pattern[str] = re.compile(
     r"[Ss]\d{1,2}[Ee]\d{1,3}"
-    r"|\d{1,2}x\d{1,3}"
-    r"|(?:^|/)Season \d+(?:/|$)"
+    r"|(?<!\d)\d{1,2}x\d{1,3}(?!\d)"
+    r"|(?:^|/)(?i:season) \d+(?:/|$)"
 )
 
 

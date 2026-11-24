@@ -117,6 +117,54 @@ def test_tv_pattern_ignores_non_tv_text(text):
     assert TV_PATTERN.search(text) is None
 
 
+@pytest.mark.parametrize("text", ["1920x1080", "3840x2160", "1280x720", "1080x1920"])
+def test_tv_pattern_ignores_resolution_tokens(text):
+    assert TV_PATTERN.search(text) is None
+
+
+@pytest.mark.parametrize("text", ["season 3", "SEASON 3", "SeAsOn 12"])
+def test_tv_pattern_season_token_is_case_insensitive(text):
+    assert TV_PATTERN.search(text) is not None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "Movies/Movie (2020) 1920x1080.mkv",
+        "Movies/Movie 3840x2160.mkv",
+        "Movies/Heat.1995.1920x1080.BluRay.mkv",
+        "Movies/Movie 1280x720.mp4",
+    ],
+)
+def test_resolution_tokens_are_not_series_hints(path):
+    assert classify(path) == "movie"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "Shows/Show/Season 1/Episode One.mkv",
+        "Shows/Show/season 1/Episode One.mkv",
+        "Shows/Show/SEASON 1/Episode One.mkv",
+        "Shows/Show/SeAsOn 12/Episode One.mkv",
+    ],
+)
+def test_season_segment_is_case_insensitive(path):
+    assert classify(path) == "series"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "Movies/Preseason 2 Highlights.mkv",
+        "Movies/The Season 2 Finale/feature.mkv",
+        "Movies/Season 2 Extras/feature.mkv",
+    ],
+)
+def test_season_word_must_be_a_whole_path_segment(path):
+    assert classify(path) == "movie"
+
+
 def test_classify_return_annotation_declares_exact_vocabulary():
     return_type = get_type_hints(classify)["return"]
     assert set(get_args(return_type)) == MEDIA_KINDS
