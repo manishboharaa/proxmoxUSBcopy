@@ -1,11 +1,12 @@
 """Read-only JSON API and SSE progress stream for the usbcopy dashboard.
 
-Every endpoint except ``POST /api/login`` requires the signed session cookie.
-The only non-GET endpoint besides login is logout, which clears that cookie.
-No route changes configuration, starts work, or touches the filesystem.
+Every read endpoint requires the signed session cookie. Login is public, and
+logout is public and idempotent (it only expires the cookie). No route changes
+configuration, starts work, or touches the filesystem.
 """
 
 import json
+import logging
 import secrets
 import sqlite3
 import time
@@ -27,6 +28,8 @@ from usbcopy.web import (
     clear_session_cookie,
     set_session_cookie,
 )
+
+logger = logging.getLogger(__name__)
 
 TERMINAL_RUN_STATUSES = frozenset(
     {"completed", "completed_with_errors", "interrupted", "failed"}
@@ -122,10 +125,11 @@ def build_api_router(config: Config, session_manager: SessionManager) -> APIRout
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="could not create session",
             )
+        _record_login_audit(config, request)
         set_session_cookie(response, token, secure=request.url.scheme == "https")
         return {"username": session.username, "csrf": session.csrf}
 
-    @protected.post("/logout")
+    @router.post("/logout")
     def logout(request: Request, response: Response) -> dict[str, bool]:
         clear_session_cookie(response, secure=request.url.scheme == "https")
         return {"ok": True}
@@ -300,6 +304,29 @@ def build_api_router(config: Config, session_manager: SessionManager) -> APIRout
 
     router.include_router(protected)
     return router
+
+
+def _record_login_audit(config: Config, request: Request) -> None:
+    """Record a successful login without ever blocking it.
+
+    The audit row is best effort: a missing schema, an unavailable database,
+    or any other SQLite error is logged as a warning and the caller still
+    issues the session.
+    """
+    client_host = request.client.host if request.client is not None else None
+    detail = json.dumps({"client": client_host}, sort_keys=True)
+    try:
+        conn = open_db(config.db_path)
+        try:
+            conn.execute(
+                "INSERT INTO audit (actor, action, detail_json) VALUES (?, 'login', ?)",
+                (config.username, detail),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as exc:
+        logger.warning("could not record login audit: %s", exc)
 
 
 def _password_matches(password: str, password_hash: str) -> bool:

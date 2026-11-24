@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -143,8 +144,18 @@ def test_read_endpoints_require_login(client: TestClient, path: str):
     assert client.get(path).status_code == 401
 
 
-def test_logout_requires_login(client: TestClient):
-    assert client.post("/api/logout").status_code == 401
+def test_logout_without_session_clears_cookie(client: TestClient):
+    response = client.post("/api/logout")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+    header = response.headers["set-cookie"].lower()
+    assert header.startswith(f"{SESSION_COOKIE}=")
+    assert "max-age=0" in header
+    assert "path=/" in header and "httponly" in header
+    assert "samesite=lax" in header
+
+    assert client.get("/api/status").status_code == 401
 
 
 def test_invalid_session_cookie_is_rejected(client: TestClient):
@@ -225,6 +236,32 @@ def test_login_rejects_malformed_payloads(client: TestClient):
         ).status_code
         == 401
     )
+
+
+def test_login_writes_audit_row(client: TestClient, conn):
+    assert post_login(client).status_code == 200
+    rows = conn.execute(
+        "SELECT actor, action, detail_json FROM audit WHERE action = 'login'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["actor"] == "admin"
+    assert json.loads(rows[0]["detail_json"]) == {"client": "testclient"}
+
+
+def test_failed_login_does_not_write_audit(client: TestClient, conn):
+    assert post_login(client, password="wrong password").status_code == 401
+    assert conn.execute("SELECT COUNT(*) FROM audit").fetchone()[0] == 0
+
+
+def test_audit_failure_does_not_block_login(config: Config, tmp_path: Path, caplog):
+    broken = replace(config, db_path=tmp_path / "uninitialised.db")
+    with TestClient(create_app(broken, start_background=False)) as broken_client:
+        with caplog.at_level(logging.WARNING, logger="usbcopy.api"):
+            response = post_login(broken_client)
+        assert response.status_code == 200
+        assert response.json()["csrf"]
+        assert SESSION_COOKIE in response.cookies
+    assert "could not record login audit" in caplog.text
 
 
 def test_login_rejects_malformed_password_hash(config: Config):
