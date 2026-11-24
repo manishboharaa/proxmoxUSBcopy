@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from usbcopy.db import init_db, open_db
+from usbcopy.inventory import create_inventory, scan_inventory
+
+INVENTORY_MTIME = 1_700_000_000
 
 
 @pytest.fixture
@@ -34,3 +38,16 @@ def sample_tree(tmp_path: Path) -> Path:
 
     (root / "notes.txt").write_bytes(b"hi")
     return root
+
+
+@pytest.fixture
+def inventory(conn, tmp_path: Path) -> int:
+    root = tmp_path / "inventory-drive"
+    movie_dir = root / "Movies" / "Heat (1995)"
+    movie_dir.mkdir(parents=True)
+    for path in (root / "Heat.mkv", movie_dir / "Heat.mkv"):
+        path.write_bytes(b"hi")
+        os.utime(path, (INVENTORY_MTIME, INVENTORY_MTIME))
+    inventory_id = create_inventory(conn, drive_id=1, root=str(root))
+    scan_inventory(conn, inventory_id, root)
+    return inventory_id
