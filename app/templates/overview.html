@@ -238,7 +238,7 @@
       <tbody>
         {% for run in runs %}
         <tr>
-          <td class="mono">#{{ run.run_id }}</td>
+          <td class="mono"><a class="run-link" href="/runs/{{ run.run_id }}">#{{ run.run_id }}</a></td>
           <td>{{ run.drive }}</td>
           <td>{{ run.destination }}</td>
           <td class="num mono">{{ run.files }}</td>

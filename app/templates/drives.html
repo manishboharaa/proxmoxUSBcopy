@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Drives{% endblock %}
+
+{% block content %}
+<div class="page-head" id="top">
+  <div>
+    <h1>Drives</h1>
+    <p class="page-sub">{{ page_sub }}</p>
+  </div>
+  <div class="page-meta">
+    <span class="chip chip-neutral">Read-only</span>
+    <span class="chip {% if present %}chip-ok{% else %}chip-neutral{% endif %}">{{ drives_chip }}</span>
+  </div>
+</div>
+
+{% if error %}
+<div class="panel banner-error" role="alert">{{ error }}</div>
+{% endif %}
+
+<section class="panel panel-wide" aria-labelledby="drives-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="drives-title">Drive history</h2>
+      <p class="panel-sub">Every drive that has been seen, including those no longer plugged in.</p>
+    </div>
+    <span class="chip {% if present %}chip-ok{% else %}chip-neutral{% endif %}">{{ drives_chip }}</span>
+  </div>
+  {% if drives %}
+  <div class="table-wrap">
+    <table class="runs-table drives-table">
+      <caption class="sr-only">Every drive seen by this host</caption>
+      <thead>
+        <tr>
+          <th scope="col">Drive</th>
+          <th scope="col">Serial</th>
+          <th scope="col">UUID</th>
+          <th scope="col">Filesystem</th>
+          <th scope="col">First seen</th>
+          <th scope="col">Last seen</th>
+          <th scope="col">Last inventory</th>
+          <th scope="col" class="num">Runs</th>
+          <th scope="col">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for drive in drives %}
+        <tr>
+          <td>
+            {{ drive.label }}
+            <p class="drive-sub">Mountpoint <span class="mono">{{ drive.mountpoint }}</span></p>
+          </td>
+          <td class="mono">{{ drive.serial }}</td>
+          <td class="mono">{{ drive.uuid }}</td>
+          <td>{{ drive.fs_type }}</td>
+          <td class="mono">{{ drive.first_seen }}</td>
+          <td class="mono">{{ drive.last_seen }}</td>
+          <td>{{ drive.last_inventory }}</td>
+          <td class="num mono">{{ drive.runs }}</td>
+          <td><span class="chip {{ drive.chip }}">{{ drive.status }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    <p class="empty-title">No drives seen yet.</p>
+    <p class="empty-note">A drive appears here the first time it is mounted, and stays after it is removed.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

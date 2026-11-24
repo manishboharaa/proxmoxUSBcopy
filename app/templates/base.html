@@ -109,7 +109,7 @@
     <nav class="nav" aria-label="Main">
       <a class="nav-link{% if path == '/' %} is-current{% endif %}" href="/"{% if path == '/' %} aria-current="page"{% endif %}>Overview</a>
       <a class="nav-link{% if path == '/import' %} is-current{% endif %}" href="/import"{% if path == '/import' %} aria-current="page"{% endif %}>Import</a>
-      <a class="nav-link{% if path == '/runs' %} is-current{% endif %}" href="/runs"{% if path == '/runs' %} aria-current="page"{% endif %}>Runs</a>
+      <a class="nav-link{% if path == '/runs' or path.startswith('/runs/') %} is-current{% endif %}" href="/runs"{% if path == '/runs' or path.startswith('/runs/') %} aria-current="page"{% endif %}>Runs</a>
       <a class="nav-link{% if path == '/drives' %} is-current{% endif %}" href="/drives"{% if path == '/drives' %} aria-current="page"{% endif %}>Drives</a>
       <a class="nav-link{% if path == '/about' %} is-current{% endif %}" href="/about"{% if path == '/about' %} aria-current="page"{% endif %}>About</a>
     </nav>

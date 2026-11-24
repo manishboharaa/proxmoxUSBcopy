@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}About{% endblock %}
+
+{% block content %}
+<div class="page-head" id="top">
+  <div>
+    <h1>About</h1>
+    <p class="page-sub">Version, configuration, and log locations for this host.</p>
+  </div>
+  <div class="page-meta">
+    <span class="chip chip-neutral">Read-only</span>
+    <span class="chip chip-info">v{{ version }}</span>
+  </div>
+</div>
+
+{% if error %}
+<div class="panel banner-error" role="alert">{{ error }}</div>
+{% endif %}
+
+<section class="panel panel-wide" aria-labelledby="app-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="app-title">proxmoxUSBcopy</h2>
+      <p class="panel-sub">Copies movies and series from USB drives into the library folders on this host.</p>
+    </div>
+    <span class="chip chip-neutral">MIT</span>
+  </div>
+  <dl class="facts">
+    {% for fact in application_facts %}
+    <div>
+      <dt>{{ fact.label }}</dt>
+      <dd{% if fact.mono %} class="mono"{% endif %}>{{ fact.value }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+</section>
+
+<section class="panel panel-wide" aria-labelledby="destinations-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="destinations-title">Destinations</h2>
+      <p class="panel-sub">Configured library folders. Files land directly inside them.</p>
+    </div>
+    <span class="chip chip-neutral">{{ destinations|length }} profiles</span>
+  </div>
+  <dl class="facts">
+    {% for destination in destinations %}
+    <div>
+      <dt>{{ destination.name }}</dt>
+      <dd class="mono">{{ destination.path }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+  <p class="empty-note">There is no drive-label wrapper: the folder structure below the selection is preserved.</p>
+</section>
+
+<section class="panel panel-wide" aria-labelledby="copy-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="copy-title">Copy settings</h2>
+      <p class="panel-sub">Loaded from the config file on startup; change it there, not here.</p>
+    </div>
+    <span class="chip chip-neutral">Config</span>
+  </div>
+  <dl class="facts">
+    {% for fact in copy_facts %}
+    <div>
+      <dt>{{ fact.label }}</dt>
+      <dd{% if fact.mono %} class="mono"{% endif %}>{{ fact.value }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+</section>
+
+<section class="panel panel-wide" aria-labelledby="logs-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="logs-title">Logs</h2>
+      <p class="panel-sub">Read them on the host with journalctl.</p>
+    </div>
+    <span class="chip chip-neutral">journald</span>
+  </div>
+  <dl class="facts">
+    {% for fact in log_facts %}
+    <div>
+      <dt>{{ fact.label }}</dt>
+      <dd{% if fact.mono %} class="mono"{% endif %}>{{ fact.value }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+  <p class="empty-note">{{ log_note }}</p>
+</section>
+{% endblock %}

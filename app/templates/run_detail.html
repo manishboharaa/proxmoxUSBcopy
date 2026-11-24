@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}{% if run %}Run {{ run.run_id }}{% else %}Run{% endif %}{% endblock %}
+
+{% block content %}
+{% if run %}
+<div class="page-head" id="top">
+  <div>
+    <h1>Run {{ run.run_id }}</h1>
+    <p class="page-sub">{{ run.sub }}</p>
+  </div>
+  <div class="page-meta">
+    <span class="chip {{ run.chip }}">{{ run.status }}</span>
+    <a class="btn btn-quiet" href="/runs">Back to runs</a>
+  </div>
+</div>
+
+{% if run.error %}
+<div class="panel banner-error" role="alert">{{ run.error }}</div>
+{% endif %}
+
+<section class="panel panel-wide" aria-labelledby="summary-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="summary-title">Run summary</h2>
+      <p class="panel-sub">Every file keeps its own outcome, hash, and timing.</p>
+    </div>
+    <span class="chip {{ run.chip }}">{{ run.status }}</span>
+  </div>
+  <dl class="meta-grid">
+    <div>
+      <dt>Destination</dt>
+      <dd>{{ run.destination }} <span class="mono">{{ run.destination_path }}</span></dd>
+    </div>
+    <div>
+      <dt>Drive</dt>
+      <dd>{{ run.drive }}</dd>
+    </div>
+    <div>
+      <dt>Destination key</dt>
+      <dd class="mono">{{ run.destination_key }}</dd>
+    </div>
+    <div>
+      <dt>Mode</dt>
+      <dd>{{ run.mode }}</dd>
+    </div>
+    <div>
+      <dt>Inventory</dt>
+      <dd class="mono">{{ run.inventory }}</dd>
+    </div>
+    <div>
+      <dt>Files</dt>
+      <dd class="mono">{{ run.files_total }}</dd>
+    </div>
+    <div>
+      <dt>Size</dt>
+      <dd class="mono">{{ run.size }}</dd>
+    </div>
+    <div>
+      <dt>Copied</dt>
+      <dd class="mono">{{ run.copied_text }}</dd>
+    </div>
+    <div>
+      <dt>Issues</dt>
+      <dd>{{ run.issues }}</dd>
+    </div>
+    <div>
+      <dt>Duration</dt>
+      <dd class="mono">{{ run.duration }}</dd>
+    </div>
+    <div>
+      <dt>Started</dt>
+      <dd class="mono">{{ run.started }}</dd>
+    </div>
+    <div>
+      <dt>Finished</dt>
+      <dd class="mono">{{ run.finished }}</dd>
+    </div>
+  </dl>
+  {% if outcome and outcome.cells %}
+  <div class="outcome">
+    <div class="outcome-strip" role="img" aria-label="{{ outcome.label }}">
+      {% for cls in outcome.cells %}<span class="outcome-cell {{ cls }}"></span>{% endfor %}
+    </div>
+    <p class="outcome-legend">
+      {% for entry in outcome.legend %}<span class="dot {{ entry.dot }}"></span>{{ entry.text }}{% endfor %}
+    </p>
+    {% if outcome.note %}<p class="empty-note">{{ outcome.note }}</p>{% endif %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel panel-wide" aria-labelledby="files-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="files-title">Files</h2>
+      <p class="panel-sub">Source paths are relative to the drive root; destination paths are mapped under the configured library folder.</p>
+    </div>
+    <span class="chip chip-neutral">{{ items|length }} files</span>
+  </div>
+  {% if items %}
+  <div class="table-wrap">
+    <table class="runs-table">
+      <caption class="sr-only">Files in run {{ run.run_id }}</caption>
+      <thead>
+        <tr>
+          <th scope="col">Status</th>
+          <th scope="col">Source file</th>
+          <th scope="col" class="num">Size</th>
+          <th scope="col" class="num">Bytes done</th>
+          <th scope="col">Destination</th>
+          <th scope="col">SHA-256</th>
+          <th scope="col" class="num">Duration</th>
+          <th scope="col" class="num">Attempts</th>
+          <th scope="col">Error</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr data-status="{{ item.raw_status }}">
+          <td><span class="chip {{ item.chip }}">{{ item.status }}</span></td>
+          <td class="mono wrap">{{ item.source }}</td>
+          <td class="num mono">{{ item.size }}</td>
+          <td class="num mono">{{ item.progress }}</td>
+          <td class="mono wrap">{{ item.destination }}</td>
+          <td class="mono hash">{{ item.sha256 }}</td>
+          <td class="num mono">{{ item.duration }}</td>
+          <td class="num mono">{{ item.attempts }}</td>
+          <td class="wrap">{% if item.error %}<span class="error-text">{{ item.error }}</span>{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    <p class="empty-title">No file records for this run.</p>
+    <p class="empty-note">Files appear here as the run is planned and each copy starts.</p>
+  </div>
+  {% endif %}
+</section>
+{% else %}
+<div class="page-head" id="top">
+  <div>
+    <h1>Run</h1>
+    <p class="page-sub">This run is not in the database.</p>
+  </div>
+  <div class="page-meta">
+    <a class="btn btn-quiet" href="/runs">Back to runs</a>
+  </div>
+</div>
+
+{% if error %}
+<div class="panel banner-error" role="alert">{{ error }}</div>
+{% endif %}
+
+<section class="panel panel-wide">
+  <div class="empty">
+    {% if error %}
+    <p class="empty-title">Run data is unavailable.</p>
+    <p class="empty-note">The database could not be read. Try loading the page again.</p>
+    {% else %}
+    <p class="empty-title">Run not found.</p>
+    <p class="empty-note">The run may have been removed, or the link is wrong. Every existing run keeps its full history.</p>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

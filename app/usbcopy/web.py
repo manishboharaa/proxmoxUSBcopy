@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import shutil
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Form, HTTPException, Request, Response, status
+from fastapi import APIRouter, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from passlib.exc import UnknownHashError
@@ -37,6 +39,27 @@ RUN_STATUS_LABELS = {
     "interrupted": ("Interrupted", "chip-idle"),
     "failed": ("Failed", "chip-bad"),
 }
+ITEM_STATUS_LABELS = {
+    "pending": ("Pending", "chip-neutral"),
+    "queued": ("Queued", "chip-info"),
+    "running": ("Copying", "chip-live"),
+    "completed": ("Copied", "chip-ok"),
+    "failed": ("Failed", "chip-bad"),
+    "cancelled": ("Cancelled", "chip-idle"),
+    "interrupted": ("Interrupted", "chip-idle"),
+}
+RUN_FILTERS = (
+    ("all", "All"),
+    ("completed", "Completed"),
+    ("completed_with_errors", "Completed with errors"),
+    ("failed", "Failed"),
+    ("interrupted", "Interrupted"),
+)
+VALID_RUN_FILTERS = frozenset(key for key, _ in RUN_FILTERS)
+RUNS_PAGE_LIMIT = 200
+OUTCOME_STRIP_LIMIT = 160
+DEFAULT_CONFIG_PATH = "/etc/usbcopy/config.toml"
+CONFIG_PATH_ENV = "USBCOPY_CONFIG"
 RECENT_RUNS_LIMIT = 8
 QUEUE_LIMIT = 5
 DRIVE_BLOCKS = 32
@@ -157,6 +180,75 @@ def build_page_router(
             logger.exception("could not load import page data")
             context = _empty_import_context(config, f"Live data unavailable: {exc}")
         return templates.TemplateResponse(request, "import.html", context)
+
+    @router.get("/runs", response_class=HTMLResponse)
+    def runs_page(
+        request: Request,
+        run_status: Annotated[str, Query(alias="status")] = "all",
+    ) -> Response:
+        if resolve_session(request, session_manager) is None:
+            return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+        active = _normalise_run_filter(run_status)
+        try:
+            conn = open_db(config.db_path)
+            try:
+                context = _runs_context(conn, active)
+            finally:
+                conn.close()
+        except (OSError, sqlite3.Error) as exc:
+            logger.exception("could not load runs page data")
+            context = _empty_runs_context(
+                active, f"Live data unavailable: {exc}"
+            )
+        return templates.TemplateResponse(request, "runs.html", context)
+
+    @router.get("/runs/{run_id}", response_class=HTMLResponse)
+    def run_detail_page(request: Request, run_id: int) -> Response:
+        if resolve_session(request, session_manager) is None:
+            return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+        not_found = False
+        try:
+            conn = open_db(config.db_path)
+            try:
+                context = _run_detail_context(conn, config, run_id)
+            finally:
+                conn.close()
+        except (OSError, sqlite3.Error) as exc:
+            logger.exception("could not load run detail data")
+            context = _empty_run_detail_context(f"Live data unavailable: {exc}")
+        else:
+            not_found = bool(context["not_found"])
+        return templates.TemplateResponse(
+            request,
+            "run_detail.html",
+            context,
+            status_code=(
+                status.HTTP_404_NOT_FOUND if not_found else status.HTTP_200_OK
+            ),
+        )
+
+    @router.get("/drives", response_class=HTMLResponse)
+    def drives_page(request: Request) -> Response:
+        if resolve_session(request, session_manager) is None:
+            return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+        try:
+            conn = open_db(config.db_path)
+            try:
+                context = _drives_context(conn)
+            finally:
+                conn.close()
+        except (OSError, sqlite3.Error) as exc:
+            logger.exception("could not load drives page data")
+            context = _empty_drives_context(f"Live data unavailable: {exc}")
+        return templates.TemplateResponse(request, "drives.html", context)
+
+    @router.get("/about", response_class=HTMLResponse)
+    def about_page(request: Request) -> Response:
+        if resolve_session(request, session_manager) is None:
+            return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+        return templates.TemplateResponse(
+            request, "about.html", _about_context(config)
+        )
 
     @router.get("/login", response_class=HTMLResponse)
     def login_page(request: Request) -> Response:
@@ -708,26 +800,436 @@ def _recent_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "ORDER BY r.id DESC LIMIT ?",
         (RECENT_RUNS_LIMIT,),
     ).fetchall()
-    runs = []
-    for row in rows:
-        label, chip = RUN_STATUS_LABELS.get(
-            row["status"], (str(row["status"]).replace("_", " ").title(), "chip-neutral")
+    return [_run_row(row) for row in rows]
+
+
+def _run_row(row: sqlite3.Row) -> dict[str, Any]:
+    label, chip = RUN_STATUS_LABELS.get(
+        row["status"],
+        (str(row["status"]).replace("_", " ").title(), "chip-neutral"),
+    )
+    return {
+        "run_id": row["id"],
+        "raw_status": row["status"],
+        "drive": row["drive_label"] or "—",
+        "destination": _destination_name(row["destination_key"]),
+        "files": f"{int(row['files_total']):,}",
+        "size": format_bytes(row["bytes_total"]),
+        "duration": format_duration(row["started_at"], row["finished_at"]),
+        "status": label,
+        "chip": chip,
+        "finished": _format_when(row["finished_at"] or row["started_at"])
+        or "—",
+    }
+
+
+def _normalise_run_filter(value: str | None) -> str:
+    """Return a supported run filter, falling back to all for junk input."""
+    candidate = (value or "").strip().lower()
+    return candidate if candidate in VALID_RUN_FILTERS else "all"
+
+
+def _run_filters(active: str) -> list[dict[str, Any]]:
+    return [
+        {"key": key, "label": label, "active": key == active}
+        for key, label in RUN_FILTERS
+    ]
+
+
+def _runs_sub(active: str) -> str:
+    if active == "all":
+        return (
+            "Every import run, newest first. "
+            "History stays after the source drive is gone."
         )
-        runs.append(
+    return f"Showing {active.replace('_', ' ')} runs only."
+
+
+def _runs_context(conn: sqlite3.Connection, active: str) -> dict[str, Any]:
+    where = "" if active == "all" else " WHERE r.status = ?"
+    params: tuple[Any, ...] = () if active == "all" else (active,)
+    total = _scalar(conn, f"SELECT COUNT(*) FROM runs r{where}", params)
+    rows = conn.execute(
+        "SELECT r.*, d.label AS drive_label FROM runs r "
+        "LEFT JOIN drives d ON d.id = r.drive_id"
+        f"{where} ORDER BY r.id DESC LIMIT ?",
+        (*params, RUNS_PAGE_LIMIT),
+    ).fetchall()
+    return {
+        "filters": _run_filters(active),
+        "active_filter": active,
+        "runs": [_run_row(row) for row in rows],
+        "total": total,
+        "shown": len(rows),
+        "page_sub": _runs_sub(active),
+        "runs_chip": _count(total, "run") if total else "No runs",
+        "error": None,
+    }
+
+
+def _empty_runs_context(active: str, error: str) -> dict[str, Any]:
+    return {
+        "filters": _run_filters(active),
+        "active_filter": active,
+        "runs": [],
+        "total": 0,
+        "shown": 0,
+        "page_sub": "Live run history is unavailable.",
+        "runs_chip": "Unavailable",
+        "error": error,
+    }
+
+
+def _run_detail_context(
+    conn: sqlite3.Connection, config: Config, run_id: int
+) -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT r.*, d.label AS drive_label, d.serial AS drive_serial "
+        "FROM runs r LEFT JOIN drives d ON d.id = r.drive_id "
+        "WHERE r.id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return _empty_run_detail_context(None)
+
+    destination = config.destinations.get(row["destination_key"])
+    item_rows = conn.execute(
+        "SELECT * FROM run_items WHERE run_id = ? ORDER BY id", (run_id,)
+    ).fetchall()
+    items = [_item_row(item, destination) for item in item_rows]
+    counts = {item_status: 0 for item_status in ITEM_STATUS_LABELS}
+    for item in items:
+        counts[item["raw_status"]] = counts.get(item["raw_status"], 0) + 1
+
+    label, chip = RUN_STATUS_LABELS.get(
+        row["status"],
+        (str(row["status"]).replace("_", " ").title(), "chip-neutral"),
+    )
+    destination_name = _destination_name(row["destination_key"])
+    drive_label = row["drive_label"] or "Unknown drive"
+    drive = (
+        f"{drive_label} ({row['drive_serial']})"
+        if row["drive_serial"]
+        else drive_label
+    )
+    started = _format_moment(row["started_at"]) or "—"
+    finished = _format_moment(row["finished_at"]) or "in progress"
+    sub_started = _format_when(row["started_at"]) or "—"
+    sub_finished = _format_when(row["finished_at"]) or "in progress"
+    duration = format_duration(row["started_at"], row["finished_at"])
+    if duration == "—" and row["status"] == "running":
+        duration = "Running"
+    files_total = max(int(row["files_total"] or 0), len(items))
+    run = {
+        "run_id": row["id"],
+        "status": label,
+        "chip": chip,
+        "sub": (
+            f"{destination_name}, {drive_label}. "
+            f"Started {sub_started}, finished {sub_finished}."
+        ),
+        "drive": drive,
+        "destination": destination_name,
+        "destination_key": row["destination_key"],
+        "destination_path": (
+            str(destination.path) if destination is not None else "Not configured"
+        ),
+        "mode": str(row["mode"]).capitalize(),
+        "inventory": (
+            row["inventory_id"] if row["inventory_id"] is not None else "—"
+        ),
+        "files_total": files_total,
+        "size": format_bytes(row["bytes_total"]),
+        "copied_text": (
+            f"{counts['completed']:,} of {files_total:,} files, "
+            f"{format_bytes(row['bytes_done'])}"
+        ),
+        "issues": _issues_text(counts),
+        "duration": duration,
+        "started": started,
+        "finished": finished,
+        "error": row["error"] or "",
+    }
+    return {
+        "run": run,
+        "items": items,
+        "not_found": False,
+        "outcome": _outcome(items, counts),
+        "error": None,
+    }
+
+
+def _empty_run_detail_context(error: str | None) -> dict[str, Any]:
+    return {
+        "run": None,
+        "items": [],
+        "not_found": error is None,
+        "outcome": None,
+        "error": error,
+    }
+
+
+def _item_row(row: sqlite3.Row, destination) -> dict[str, Any]:
+    raw_status = row["status"]
+    label, chip = ITEM_STATUS_LABELS.get(
+        raw_status,
+        (str(raw_status).replace("_", " ").title(), "chip-neutral"),
+    )
+    relative = row["dest_rel_path"] or ""
+    if destination is not None and relative:
+        destination_path = _join_destination(destination.path, relative)
+    else:
+        destination_path = relative or "—"
+    if raw_status == "running" and row["started_at"]:
+        duration = "Running"
+    else:
+        duration = format_duration(row["started_at"], row["finished_at"])
+    return {
+        "raw_status": raw_status,
+        "status": label,
+        "chip": chip,
+        "source": row["rel_path"],
+        "size": format_bytes(row["size"]),
+        "progress": format_bytes(row["bytes_done"]),
+        "destination": destination_path,
+        "sha256": row["sha256"] or "—",
+        "duration": duration,
+        "attempts": int(row["attempts"] or 0),
+        "error": row["error"] or "",
+    }
+
+
+def _issues_text(counts: dict[str, int]) -> str:
+    parts = []
+    if counts["failed"]:
+        parts.append(_count(counts["failed"], "failed file"))
+    if counts["cancelled"]:
+        parts.append(_count(counts["cancelled"], "cancelled file"))
+    if counts["interrupted"]:
+        parts.append(_count(counts["interrupted"], "interrupted file"))
+    return ", ".join(parts) if parts else "None"
+
+
+def _outcome(
+    items: list[dict[str, Any]], counts: dict[str, int]
+) -> dict[str, Any]:
+    cells = []
+    for item in items[:OUTCOME_STRIP_LIMIT]:
+        if item["raw_status"] == "completed":
+            cells.append("is-ok")
+        elif item["raw_status"] == "failed":
+            cells.append("is-failed")
+        else:
+            cells.append("")
+    legend = []
+    for key, dot, text in (
+        ("completed", "dot-ok", "copied"),
+        ("failed", "dot-bad", "failed"),
+        ("cancelled", "dot-idle", "cancelled"),
+        ("interrupted", "dot-idle", "interrupted"),
+    ):
+        if counts[key]:
+            legend.append({"dot": dot, "text": f"{counts[key]} {text}"})
+    in_progress = counts["pending"] + counts["queued"] + counts["running"]
+    if in_progress:
+        legend.append({"dot": "dot-idle", "text": f"{in_progress} in progress"})
+    texts = [entry["text"] for entry in legend]
+    note = ""
+    if len(items) > OUTCOME_STRIP_LIMIT:
+        note = (
+            f"The strip shows the first {OUTCOME_STRIP_LIMIT} "
+            f"of {len(items):,} files."
+        )
+    return {
+        "cells": cells,
+        "legend": legend,
+        "label": (
+            f"Run outcome: {', '.join(texts)}" if texts else "Run outcome: no files"
+        ),
+        "note": note,
+    }
+
+
+def _join_destination(root: Path, rel_path: str) -> str:
+    parts = [part for part in str(rel_path).replace("\\", "/").split("/") if part]
+    return str(Path(root).joinpath(*parts)) if parts else str(root)
+
+
+def _drives_context(conn: sqlite3.Connection) -> dict[str, Any]:
+    rows = conn.execute(
+        "SELECT d.*, "
+        "(SELECT MAX(i.id) FROM inventories i WHERE i.drive_id = d.id) "
+        "AS last_inventory_id, "
+        "(SELECT COUNT(*) FROM runs r WHERE r.drive_id = d.id) AS run_count "
+        "FROM drives d ORDER BY d.present DESC, d.last_seen DESC, d.id"
+    ).fetchall()
+    drives = [_drive_row(conn, row) for row in rows]
+    present = sum(1 for drive in drives if drive["present"])
+    total = len(drives)
+    return {
+        "drives": drives,
+        "present": present,
+        "page_sub": (
+            f"{present} of {_count(total, 'drive')} present."
+            if total
+            else "Every drive that has been plugged in is listed here."
+        ),
+        "drives_chip": f"{present} present" if total else "No drives",
+        "error": None,
+    }
+
+
+def _empty_drives_context(error: str) -> dict[str, Any]:
+    return {
+        "drives": [],
+        "present": 0,
+        "page_sub": "Live drive history is unavailable.",
+        "drives_chip": "Unavailable",
+        "error": error,
+    }
+
+
+def _drive_row(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    inventory = None
+    if row["last_inventory_id"] is not None:
+        inventory = conn.execute(
+            "SELECT * FROM inventories WHERE id = ?",
+            (row["last_inventory_id"],),
+        ).fetchone()
+    if inventory is None:
+        last_inventory = "Never inventoried"
+    elif inventory["status"] == "complete":
+        last_inventory = (
+            f"Complete, {int(inventory['total_files']):,} files, "
+            f"{format_bytes(inventory['total_bytes'])}"
+        )
+    else:
+        last_inventory = str(inventory["status"]).capitalize()
+    return {
+        "drive_id": row["id"],
+        "label": (row["label"] or "").strip() or "Unnamed drive",
+        "mountpoint": row["mountpoint"] or "—",
+        "serial": row["serial"] or "—",
+        "uuid": row["uuid"],
+        "fs_type": row["fs_type"] or "—",
+        "first_seen": _format_moment(row["first_seen"]) or "—",
+        "last_seen": _format_moment(row["last_seen"]) or "—",
+        "last_inventory": last_inventory,
+        "runs": int(row["run_count"] or 0),
+        "present": bool(row["present"]),
+        "status": "Present" if row["present"] else "Not present",
+        "chip": "chip-ok" if row["present"] else "chip-idle",
+    }
+
+
+def _about_context(config: Config) -> dict[str, Any]:
+    destinations = [
+        {"name": _destination_name(key), "path": str(destination.path)}
+        for key, destination in sorted(config.destinations.items())
+    ]
+    return {
+        "application_facts": [
+            {"label": "Version", "value": __version__, "mono": True},
+            {"label": "License", "value": "MIT", "mono": False},
+            {"label": "Config file", "value": _config_path_text(), "mono": True},
+            {"label": "Database", "value": str(config.db_path), "mono": True},
+            {"label": "Event spool", "value": str(config.events_dir), "mono": True},
+            {"label": "Mounts root", "value": str(config.mounts_root), "mono": True},
             {
-                "run_id": row["id"],
-                "drive": row["drive_label"] or "—",
-                "destination": _destination_name(row["destination_key"]),
-                "files": f"{int(row['files_total']):,}",
-                "size": format_bytes(row["bytes_total"]),
-                "duration": format_duration(row["started_at"], row["finished_at"]),
-                "status": label,
-                "chip": chip,
-                "finished": _format_when(row["finished_at"] or row["started_at"])
-                or "—",
-            }
-        )
-    return runs
+                "label": "Dashboard",
+                "value": (
+                    "Read-only; there are no settings, retry, delete, "
+                    "or shell controls"
+                ),
+                "mono": False,
+            },
+        ],
+        "destinations": destinations,
+        "copy_facts": [
+            {
+                "label": "Default mode",
+                "value": str(config.default_mode).capitalize(),
+                "mono": False,
+            },
+            {
+                "label": "Auto import",
+                "value": "Enabled" if config.auto_enabled else "Disabled",
+                "mono": False,
+            },
+            {
+                "label": "Auto destination",
+                "value": _destination_name(config.auto_destination),
+                "mono": False,
+            },
+            {
+                "label": "Verify SHA-256",
+                "value": "Yes" if config.verify_sha256 else "No",
+                "mono": False,
+            },
+            {
+                "label": "Chunk size",
+                "value": f"{config.chunk_size_mb} MB",
+                "mono": False,
+            },
+            {
+                "label": "Retries per file",
+                "value": str(config.retries),
+                "mono": False,
+            },
+            {
+                "label": "Preserve mtime",
+                "value": "Yes" if config.preserve_mtime else "No",
+                "mono": False,
+            },
+            {
+                "label": "Reconcile scan",
+                "value": (
+                    f"Every {config.reconcile_minutes} minutes"
+                    if config.reconcile_minutes
+                    else "Off"
+                ),
+                "mono": False,
+            },
+            {
+                "label": "Skip hidden root folders",
+                "value": "Yes" if config.skip_hidden_root_dirs else "No",
+                "mono": False,
+            },
+            {
+                "label": "Default source folder",
+                "value": config.default_folder or "Whole drive",
+                "mono": False,
+            },
+        ],
+        "log_facts": [
+            {
+                "label": "Application",
+                "value": "journalctl -u usbcopy -f",
+                "mono": True,
+            },
+            {
+                "label": "Mount units",
+                "value": "journalctl -u usbcopy-mount@<device>.service -f",
+                "mono": True,
+            },
+            {
+                "label": "Since boot",
+                "value": "journalctl -b -u usbcopy",
+                "mono": True,
+            },
+        ],
+        "log_note": (
+            "Logs go straight to journald; there is no separate log file to "
+            "rotate. Runtime paths above come from the loaded configuration, "
+            "and the password hash and session secret are never rendered here."
+        ),
+        "error": None,
+    }
+
+
+def _config_path_text() -> str:
+    override = os.environ.get(CONFIG_PATH_ENV, "").strip()
+    return override or DEFAULT_CONFIG_PATH
 
 
 def _kpis(
@@ -949,6 +1451,13 @@ def _format_when(value: str | None) -> str:
     if local.date() == now.date():
         return local.strftime("%H:%M")
     return local.strftime("%d %b %H:%M")
+
+
+def _format_moment(value: str | None) -> str:
+    moment = _parse_iso(value)
+    if moment is None:
+        return ""
+    return moment.astimezone().strftime("%d %b %Y, %H:%M")
 
 
 def format_duration(start: str | None, end: str | None) -> str:

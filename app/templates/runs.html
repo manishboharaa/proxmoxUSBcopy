@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Runs{% endblock %}
+
+{% block content %}
+<div class="page-head" id="top">
+  <div>
+    <h1>Runs</h1>
+    <p class="page-sub">{{ page_sub }}</p>
+  </div>
+  <div class="page-meta">
+    <span class="chip chip-neutral">Read-only</span>
+    <span class="chip {% if total %}chip-info{% else %}chip-neutral{% endif %}">{{ runs_chip }}</span>
+  </div>
+</div>
+
+{% if error %}
+<div class="panel banner-error" role="alert">{{ error }}</div>
+{% endif %}
+
+<nav class="filters" aria-label="Filter runs by status">
+  {% for filter in filters %}
+  <a class="chip filter-chip{% if filter.active %} is-current{% endif %}"
+     data-status="{{ filter.key }}"
+     href="{% if filter.key == 'all' %}/runs{% else %}/runs?status={{ filter.key }}{% endif %}"
+     {% if filter.active %}aria-current="page"{% endif %}>{{ filter.label }}</a>
+  {% endfor %}
+</nav>
+
+<section class="panel panel-wide" aria-labelledby="runs-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="runs-title">Import runs</h2>
+      <p class="panel-sub">
+        {% if total > shown %}Showing the latest {{ shown }} of {{ total }} runs.{% else %}History stays after the source drive is gone.{% endif %}
+      </p>
+    </div>
+    <span class="chip {% if active_filter != 'all' %}chip-warn{% else %}chip-neutral{% endif %}">{{ active_filter.replace('_', ' ') | capitalize }}</span>
+  </div>
+  {% if runs %}
+  <div class="table-wrap">
+    <table class="runs-table">
+      <caption class="sr-only">Import runs{% if active_filter != 'all' %} filtered to {{ active_filter.replace('_', ' ') }}{% endif %}</caption>
+      <thead>
+        <tr>
+          <th scope="col">Run</th>
+          <th scope="col">Drive</th>
+          <th scope="col">Destination</th>
+          <th scope="col" class="num">Files</th>
+          <th scope="col" class="num">Size</th>
+          <th scope="col" class="num">Duration</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="finished">Finished</th>
+          <th scope="col"><span class="sr-only">Detail</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr data-status="{{ run.raw_status }}">
+          <td class="mono"><a class="run-link" href="/runs/{{ run.run_id }}">#{{ run.run_id }}</a></td>
+          <td>{{ run.drive }}</td>
+          <td>{{ run.destination }}</td>
+          <td class="num mono">{{ run.files }}</td>
+          <td class="num mono">{{ run.size }}</td>
+          <td class="num mono">{{ run.duration }}</td>
+          <td><span class="chip {{ run.chip }}">{{ run.status }}</span></td>
+          <td class="mono finished">{{ run.finished }}</td>
+          <td class="row-action"><a class="btn btn-quiet" href="/runs/{{ run.run_id }}">Inspect</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    {% if active_filter == 'all' %}
+    <p class="empty-title">No runs yet.</p>
+    <p class="empty-note">Nothing has been imported on this host.</p>
+    {% else %}
+    <p class="empty-title">No {{ active_filter.replace('_', ' ') }} runs.</p>
+    <p class="empty-note">Runs with this status appear here after an import.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
