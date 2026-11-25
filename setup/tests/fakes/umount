@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Fake umount for installer tests: log and clear the fake self-bind state.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'umount %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi
+
+state=${USBC_FAKE_STATE_DIR:-/nonexistent}
+rm -f -- "$state/self-bind"

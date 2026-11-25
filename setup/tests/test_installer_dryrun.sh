@@ -164,7 +164,7 @@ assert_contains 'PLAN: fetch git@example.test:owner/usbcopy.git@main' "$out"
 pass "ssh://user@ and git@host:path repository URLs are accepted"
 
 out=$("$INSTALL" --help 2>&1)
-for flag in --repo-url --ref --dry-run --yes --uninstall --help; do
+for flag in --repo-url --ref --dry-run --yes --uninstall --destroy-ct --help; do
     assert_contains "$flag" "$out" 'help output'
 done
 pass "--help documents every supported flag"
@@ -230,8 +230,9 @@ if grep -q 'pct create' "$USBC_FAKE_LOG"; then
 fi
 pass "the 72-byte password cap is enforced before the plan and CT creation"
 
-assert_fails_with 'uninstall.sh is not available' "$INSTALL" --uninstall
-pass "--uninstall fails clearly when uninstall.sh is absent"
+assert_fails_with 'no install manifest found' \
+    env USBC_MANIFEST_PATH="$WORK/missing-manifest.json" "$INSTALL" --uninstall
+pass "--uninstall fails clearly when no install manifest exists"
 
 printf '\n== destination canonicalisation ==\n'
 for bad in '///' '//' '/.'; do
@@ -382,13 +383,17 @@ printf '%s\n' "$@" >"${STUB_ARGS_FILE:?}"
 STUB
 chmod +x "$STUB_ROOT/uninstall.sh"
 export STUB_ARGS_FILE="$WORK/uninstall-args"
-"$STUB_ROOT/install.sh" --uninstall --dry-run --yes
+"$STUB_ROOT/install.sh" --uninstall --dry-run --yes --destroy-ct
 args=$(<"$STUB_ARGS_FILE")
 assert_contains '--dry-run' "$args" 'uninstaller args'
 assert_contains '--yes' "$args" 'uninstaller args'
+assert_contains '--destroy-ct' "$args" 'uninstaller args'
 assert_not_contains '--uninstall' "$args" 'uninstaller args'
-pass "--uninstall forwards only --dry-run and --yes to the uninstaller"
+pass "--uninstall forwards --dry-run, --yes, and --destroy-ct to the uninstaller"
 unset STUB_ARGS_FILE
+
+assert_fails_with 'only valid with --uninstall' "$INSTALL" --destroy-ct --dry-run
+pass "--destroy-ct without --uninstall is rejected"
 
 printf '\n== no tty and piped invocation ==\n'
 if command -v -- setsid >/dev/null 2>&1; then

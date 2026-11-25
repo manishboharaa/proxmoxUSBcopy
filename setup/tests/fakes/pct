@@ -20,7 +20,17 @@ case "$command" in
         printf 'VMID       Status     Lock         Name\n'
         printf '100        stopped                 legacy-ct\n'
         ;;
-    create | start | stop | status | push)
+    status)
+        if [[ ${USBC_FAKE_CT_MISSING:-0} == 1 ]]; then
+            exit 1
+        fi
+        if [[ ${USBC_FAKE_CT_STOPPED:-0} == 1 ]]; then
+            printf 'status: stopped\n'
+        else
+            printf 'status: running\n'
+        fi
+        ;;
+    create | start | stop | push)
         if [[ $command == push && -n ${USBC_FAKE_PUSH_DIR:-} ]]; then
             # pct push <vmid> <source> <destination>
             src=${3:-}
@@ -66,6 +76,9 @@ case "$command" in
         fi
         case "$joined" in
             *'id -u usbcopy'*)
+                if [[ ${USBC_FAKE_ID_FAIL:-0} == 1 ]]; then
+                    exit 1
+                fi
                 if [[ ${USBC_FAKE_USER_ABSENT:-0} == 1 \
                     && ! -e ${USBC_FAKE_STATE_DIR:-/nonexistent}/user-created ]]; then
                     exit 1
@@ -73,6 +86,9 @@ case "$command" in
                 printf '%s\n' "${USBC_FAKE_USBCOPY_UID:-999}"
                 ;;
             *'id -g usbcopy'*)
+                if [[ ${USBC_FAKE_ID_FAIL:-0} == 1 ]]; then
+                    exit 1
+                fi
                 printf '%s\n' "${USBC_FAKE_USBCOPY_GID:-999}"
                 ;;
             *'useradd '*)
@@ -117,6 +133,12 @@ case "$command" in
                 ;;
             *'findmnt --mountpoint'*)
                 if [[ " ${USBC_FAKE_CT_MISSING_MOUNT:-} " == *" $last "* ]]; then
+                    exit 1
+                fi
+                if [[ -n ${USBC_FAKE_MOUNTPOINTS+x} || -n ${USBC_FAKE_CT_MOUNT_STUCK+x} ]]; then
+                    if [[ " ${USBC_FAKE_MOUNTPOINTS:-} ${USBC_FAKE_CT_MOUNT_STUCK:-} " == *" $last "* ]]; then
+                        exit 0
+                    fi
                     exit 1
                 fi
                 ;;
