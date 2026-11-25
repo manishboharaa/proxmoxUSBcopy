@@ -395,7 +395,7 @@ destination_extra_key() {
 
 installer_uninstall_hint() {
     if [[ ${USBC_INSTALLER_MODE:-checkout} == bootstrap ]]; then
-        printf 'uninstall: re-run this installer with --uninstall from %s@%s (the temporary checkout is not kept)\n' \
+        printf 'uninstall: re-run this installer with --uninstall from %s@%s (the temporary download is not kept)\n' \
             "${REPO_URL:-the original repository}" "${REPO_REF:-main}"
         return 0
     fi

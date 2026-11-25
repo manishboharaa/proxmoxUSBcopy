@@ -78,10 +78,10 @@ On a Proxmox host with internet access, run:
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/manishboharaa/proxmoxUSBcopy/main/setup/install.sh)"
 ```
 
-### From a checkout
+### From the repo folder
 
-If you prefer to inspect the code first, run the installer from a checkout
-of this repository:
+If you'd rather look at the code before running anything, download or copy
+the repo to your Proxmox host and run the installer from inside it:
 
 ```bash
 cd proxmoxUSBcopy
@@ -90,7 +90,8 @@ sudo ./setup/install.sh
 
 Run `sudo ./setup/install.sh --dry-run` first if you want to see the plan
 without changing anything. `--repo-url` and `--ref` only affect the piped
-bootstrap; a checkout install uses the files in the working tree.
+bootstrap; running the installer from the repo folder uses the files in
+front of it.
 
 ### What the installer asks
 
@@ -156,10 +157,10 @@ the uninstall command.
 - `--yes` accepts defaults and skips the confirmation summary. Movies and
   Series are required and have no defaults, so `--yes` alone fails at the
   destination prompt; supply them interactively or through `USBC_ANSWERS`.
-- `--repo-url URL` selects the repository for a piped bootstrap. It is not used
-  by a checkout install.
+- `--repo-url URL` selects the repository for a piped bootstrap. It does
+  nothing when you run the installer from the repo folder.
 - `--ref REF` selects the branch, tag, or commit for a piped bootstrap (default
-  `main`). It is not used by a checkout install.
+  `main`). It does nothing when you run the installer from the repo folder.
 - `--uninstall` runs `setup/uninstall.sh` instead of installing.
 - `--destroy-ct` with `--uninstall` also destroys the container.
 - `--help` prints the options.
@@ -315,7 +316,7 @@ logs go to journald; there are no separate log files to rotate.
 
 ## Uninstall
 
-From a checkout:
+From the repo folder:
 
 ```bash
 cd proxmoxUSBcopy

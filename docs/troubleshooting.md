@@ -377,15 +377,15 @@ confirmation.
 - The history database is inside the CT at `/var/lib/usbcopy/usbcopy.db`. Copy
   it out before uninstalling if you want to keep the history.
 - For a piped install, re-run the installer with `--uninstall`; the temporary
-  checkout is deleted after the install, so there is no local script to call.
+  download is deleted after the install, so there is no local script to call.
 
 ## Manual Proxmox smoke checklist
 
 These checks need a real Proxmox VE 8 host and a throwaway USB drive. They are
 not automated in this repository; run them before relying on a new release.
 
-1. **Fresh install:** on a host with an LXC template storage, run the checkout
-   installer on a spare CT ID. It creates an unprivileged, on-boot Debian 12
+1. **Fresh install:** on a host with an LXC template storage, run the installer
+   from the repo folder on a spare CT ID. It creates an unprivileged, on-boot Debian 12
    CT, starts the dashboard, and prints a save-now admin password.
 2. **LAN dashboard:** open `http://<host-ip>:<port>` from another machine,
    log in, and confirm Overview, Import, Runs, Drives, and About render.
