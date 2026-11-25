@@ -1,5 +1,6 @@
-# usbcopy configuration — install as /etc/usbcopy/config.toml (mode 0640,
-# owner root:usbcopy). Reference layout: DESIGN.md section 17.
+# usbcopy configuration — install as /etc/usbcopy/config.toml (mode 0600,
+# owner usbcopy:usbcopy; the app rewrites it when the admin changes the
+# password). Reference layout: DESIGN.md section 17.
 
 [server]
 host = "0.0.0.0"

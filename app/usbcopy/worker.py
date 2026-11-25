@@ -13,6 +13,7 @@ import queue
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from usbcopy.config import Config
@@ -119,6 +120,11 @@ def execute_run(
                 source_root,
                 dest_root,
                 cancel_event,
+                # Bind the pre-item total now so the callback reports
+                # base + in-flight bytes for exactly this item.
+                progress_cb=lambda partial, base=bytes_done: progress.persist(
+                    base + partial
+                ),
             )
             if outcome == CANCELLED:
                 _cancel_items(conn, items[index + 1 :])
@@ -157,11 +163,16 @@ def _copy_item(
     source_root: Path | None,
     dest_root: Path,
     cancel_event: threading.Event,
+    progress_cb: Callable[[int], None] | None = None,
 ) -> tuple[str, int]:
     """Copy one item with retries; returns (outcome, bytes_copied).
 
     Every item transition is guarded on the item still being ``running``, so
     an external interruption can never be overwritten by this executor.
+
+    ``progress_cb`` receives the partial byte count of the in-flight file
+    after each copied chunk, so run-level progress also moves for a single
+    large file.
     """
     item_id = int(item["id"])
     if not _start_item(conn, item_id):
@@ -217,6 +228,7 @@ def _copy_item(
                 verify_sha256=config.verify_sha256,
                 preserve_mtime=config.preserve_mtime,
                 on_temp=lambda temp: _record_temp_path(conn, item_id, temp),
+                on_progress=progress_cb,
             )
         except (CopyError, OSError) as exc:
             last_error = exc

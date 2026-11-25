@@ -21,6 +21,7 @@ from passlib.exc import UnknownHashError
 from usbcopy import __version__
 from usbcopy.auth import (
     DEFAULT_SESSION_MAX_AGE_SECONDS,
+    MIN_PASSWORD_LENGTH,
     Session,
     SessionManager,
     verify_password,
@@ -248,6 +249,16 @@ def build_page_router(
             return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
         return templates.TemplateResponse(
             request, "about.html", _about_context(config)
+        )
+
+    @router.get("/account", response_class=HTMLResponse)
+    def account_page(request: Request) -> Response:
+        if resolve_session(request, session_manager) is None:
+            return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+        return templates.TemplateResponse(
+            request,
+            "account.html",
+            {"username": config.username, "min_password_length": MIN_PASSWORD_LENGTH},
         )
 
     @router.get("/login", response_class=HTMLResponse)
@@ -1270,7 +1281,7 @@ def _kpis(
     )
 
     available = [destination for destination in destinations if destination["available"]]
-    free_total = sum(destination["free_bytes"] for destination in available)
+    free_total = _free_bytes_unique_devices(available)
     if available:
         free_value, free_unit = _split_size(free_total)
         free_note = " · ".join(
@@ -1381,6 +1392,36 @@ def _disk_usage(path: str | None):
     try:
         return shutil.disk_usage(path)
     except (OSError, ValueError):
+        return None
+
+
+def _free_bytes_unique_devices(destinations: list[dict[str, Any]]) -> int:
+    """Sum free bytes once per distinct filesystem.
+
+    Destination folders usually share one physical disk, so a plain sum
+    would report the same free space once per folder (three folders on one
+    1 TB disk would read as ~3 TB). ``st_dev`` identifies the filesystem
+    that actually holds each folder; a folder whose device cannot be
+    stat'ed is still counted so nothing silently disappears.
+    """
+    total = 0
+    seen_devices: set[int] = set()
+    for destination in destinations:
+        device = _stat_dev(str(destination["path"]))
+        if device is not None:
+            if device in seen_devices:
+                continue
+            seen_devices.add(device)
+        total += int(destination["free_bytes"])
+    return total
+
+
+def _stat_dev(path: str | None) -> int | None:
+    if not path:
+        return None
+    try:
+        return os.stat(path).st_dev
+    except OSError:
         return None
 
 

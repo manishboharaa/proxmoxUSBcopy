@@ -111,18 +111,18 @@
       </p>
       <h3 class="active-name">{{ active.name }}</h3>
       <p class="active-file mono">{{ active.file }}</p>
-      <div class="blocks blocks-progress" role="progressbar" aria-label="Copy progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ active.percent }}">
+      <div class="blocks blocks-progress" role="progressbar" aria-label="Copy progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ active.percent }}" data-run-progress="{{ active.run_id }}">
         {% for cls in active.blocks %}<span class="blk {{ cls }}"></span>{% endfor %}
       </div>
       <div class="progress-meta">
-        <span class="mono">{{ active.done_text }} of {{ active.total_text }}</span>
-        <span class="mono">{{ active.percent }}%</span>
+        <span class="mono" data-run-done>{{ active.done_text }} of {{ active.total_text }}</span>
+        <span class="mono" data-run-percent>{{ active.percent }}%</span>
       </div>
     </div>
     <div class="active-side">
-      <p class="percent">{{ active.percent }}<span class="percent-sign">%</span></p>
+      <p class="percent" data-run-percent-big>{{ active.percent }}<span class="percent-sign">%</span></p>
       <p class="percent-label">of this run</p>
-      <p class="spark-label active-remaining">{{ active.remaining_text }} remaining</p>
+      <p class="spark-label active-remaining" data-run-remaining>{{ active.remaining_text }} remaining</p>
     </div>
   </div>
   <div class="active-foot">
@@ -258,4 +258,61 @@
   </div>
   {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+{% if active %}
+<script>
+  (function () {
+    var runId = "{{ active.run_id }}";
+    var meter = document.querySelector('[data-run-progress="' + runId + '"]');
+    if (!meter || !window.EventSource) return;
+    var blocks = meter.querySelectorAll(".blk");
+    var doneEl = document.querySelector("[data-run-done]");
+    var percentEl = document.querySelector("[data-run-percent]");
+    var percentBigEl = document.querySelector("[data-run-percent-big]");
+    var remainingEl = document.querySelector("[data-run-remaining]");
+    var terminal = {
+      completed: 1, completed_with_errors: 1, failed: 1, interrupted: 1
+    };
+    function formatBytes(value) {
+      if (!isFinite(value) || value <= 0) return "0 B";
+      var units = ["B", "KB", "MB", "GB", "TB"];
+      var index = 0;
+      while (value >= 1000 && index < units.length - 1) {
+        value /= 1000; index += 1;
+      }
+      return Math.round(value) + " " + units[index];
+    }
+    function render(done, total) {
+      var percent = total > 0 ? Math.round((done * 100) / total) : 0;
+      percent = Math.max(0, Math.min(100, percent));
+      meter.setAttribute("aria-valuenow", String(percent));
+      var filled = Math.round((percent * blocks.length) / 100);
+      for (var index = 0; index < blocks.length; index += 1) {
+        blocks[index].className = index < filled ? "blk is-on" : "blk";
+      }
+      if (doneEl) doneEl.textContent = formatBytes(done) + " of " + formatBytes(total);
+      if (percentEl) percentEl.textContent = percent + "%";
+      if (percentBigEl) {
+        percentBigEl.innerHTML = percent + '<span class="percent-sign">%</span>';
+      }
+      if (remainingEl) {
+        remainingEl.textContent = formatBytes(Math.max(total - done, 0)) + " remaining";
+      }
+    }
+    var source = new EventSource("/api/events/stream?run_id=" + encodeURIComponent(runId));
+    source.onmessage = function (event) {
+      var snapshot;
+      try { snapshot = JSON.parse(event.data); } catch (error) { return; }
+      render(Number(snapshot.bytes_done) || 0, Number(snapshot.bytes_total) || 0);
+      if (terminal[snapshot.status]) {
+        source.close();
+        window.location.reload();
+      }
+    };
+    source.onerror = function () { source.close(); };
+  })();
+</script>
+{% endif %}
 {% endblock %}

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
+import itertools
 import threading
 import time
 from pathlib import Path
@@ -724,3 +726,49 @@ def test_worker_start_and_stop_are_idempotent(db_path, config):
     worker.start()
     worker.stop()
     worker.stop()
+
+
+def test_run_progress_moves_during_a_single_large_file(
+    conn, config, dirs, monkeypatch
+):
+    """A multi-chunk file updates run bytes_done before the file completes."""
+    source = dirs["source"] / "Movies" / "Heat (1995)" / "Heat.mkv"
+    payload = b"x" * (3 * 1024 * 1024)
+    source.write_bytes(payload)
+    plan = RunPlan(
+        items=[PlanItem(str(source), "Heat (1995)/Heat.mkv", len(payload))],
+        skipped=[],
+        warnings=[],
+        total_bytes=len(payload),
+    )
+    config = dataclasses.replace(config, chunk_size_mb=1)
+    tick = itertools.count(start=1, step=1)
+    monkeypatch.setattr(worker_module, "monotonic", lambda: next(tick) * 10.0)
+
+    run_id = create_run(conn, None, None, "movies", "review", plan)
+    mid_file_db_bytes: list[int] = []
+    real_copy = worker_module.copy_file
+
+    def spy(source, destination, **kwargs):
+        original = kwargs.get("on_progress")
+
+        def wrapped(partial):
+            if original is not None:
+                original(partial)
+            if partial < len(payload):
+                mid_file_db_bytes.append(
+                    int(get_run(conn, run_id)["bytes_done"] or 0)
+                )
+
+        kwargs["on_progress"] = wrapped
+        return real_copy(source, destination, **kwargs)
+
+    monkeypatch.setattr(worker_module, "copy_file", spy)
+
+    execute_run(conn, run_id, config, {"movies": dirs["movies"]}, threading.Event())
+
+    assert get_run(conn, run_id)["bytes_done"] == len(payload)
+    assert mid_file_db_bytes, "progress callback never fired mid-file"
+    assert any(db_bytes >= 1024 * 1024 for db_bytes in mid_file_db_bytes), (
+        f"run bytes_done did not move mid-file: {mid_file_db_bytes}"
+    )

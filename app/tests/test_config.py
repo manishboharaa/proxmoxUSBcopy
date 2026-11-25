@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from usbcopy.config import Config, ConfigError, Destination, load_config
+from usbcopy.config import (
+    Config,
+    ConfigError,
+    Destination,
+    load_config,
+    set_password_hash,
+)
 
 
 def _toml_bool(value: bool) -> str:
@@ -200,3 +206,48 @@ def test_invalid_toml_raises(tmp_path):
     p.write_text("[server\nport = 8088", encoding="utf-8")
     with pytest.raises(ConfigError, match="TOML"):
         load_config(p)
+
+
+def test_set_password_hash_replaces_only_the_hash_line(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[auth]\nusername = "admin"\n'
+        'password_hash = "$2b$12$old"\n'
+        'session_secret = "keep-me"\n',
+        encoding="utf-8",
+    )
+    new_hash = "$2b$12$" + "a" * 53
+
+    set_password_hash(config_path, new_hash)
+
+    text = config_path.read_text(encoding="utf-8")
+    assert f'password_hash = "{new_hash}"' in text
+    assert 'username = "admin"' in text
+    assert 'session_secret = "keep-me"' in text
+    assert "$2b$12$old" not in text
+
+
+def test_set_password_hash_preserves_mode(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('password_hash = "$2b$12$old"\n', encoding="utf-8")
+    config_path.chmod(0o600)
+
+    set_password_hash(config_path, "$2b$12$" + "b" * 53)
+
+    assert config_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_set_password_hash_rejects_non_bcrypt(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('password_hash = "$2b$12$old"\n', encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="non-bcrypt"):
+        set_password_hash(config_path, "plaintext")
+
+
+def test_set_password_hash_requires_an_existing_hash_line(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[server]\nport = 8088\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="password_hash"):
+        set_password_hash(config_path, "$2b$12$" + "c" * 53)

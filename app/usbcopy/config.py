@@ -7,6 +7,7 @@ only loads and validates it.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,7 @@ class Config:
     mounts_root: Path
     reconcile_minutes: int
     skip_hidden_root_dirs: bool
+    config_path: Path | None = None
 
 
 def load_config(path: Path) -> Config:
@@ -146,6 +148,7 @@ def load_config(path: Path) -> Config:
         mounts_root=mounts_root,
         reconcile_minutes=reconcile_minutes,
         skip_hidden_root_dirs=skip_hidden_root_dirs,
+        config_path=Path(path),
     )
 
 
@@ -210,3 +213,45 @@ def _optional_path(table: dict[str, Any], key: str, default: Path) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"paths.{key} must be a non-empty string")
     return Path(value)
+
+
+def set_password_hash(path: Path, new_hash: str) -> None:
+    """Replace the ``auth.password_hash`` line in a config file atomically.
+
+    Only that one line changes; every other byte of the file is preserved so
+    comments and ordering survive. The file must be writable by the calling
+    user, which the installer arranges by owning it with the ``usbcopy``
+    account. The replacement file is written next to the target and renamed
+    into place, so a crash can never leave a half-written config.
+    """
+    path = Path(path)
+    if not new_hash.startswith("$2"):
+        raise ConfigError("refusing to store a non-bcrypt password hash")
+    try:
+        raw = path.read_text(encoding="utf-8")
+        mode = path.stat().st_mode & 0o777
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"cannot read config file {path}: {exc}") from exc
+
+    replaced = False
+    lines = raw.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("password_hash"):
+            newline = "\n" if line.endswith("\n") else ""
+            lines[index] = f'password_hash = "{new_hash}"{newline}'
+            replaced = True
+            break
+    if not replaced:
+        raise ConfigError(f"config file {path} has no auth.password_hash line")
+
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            handle.write("".join(lines))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise ConfigError(f"cannot write config file {path}: {exc}") from exc

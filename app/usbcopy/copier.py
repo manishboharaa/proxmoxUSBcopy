@@ -92,6 +92,7 @@ def copy_file(
     verify_sha256: bool = True,
     preserve_mtime: bool = True,
     on_temp: Callable[[Path], None] | None = None,
+    on_progress: Callable[[int], None] | None = None,
 ) -> CopyResult:
     """Copy ``source`` to ``destination`` safely and return its SHA-256.
 
@@ -105,6 +106,10 @@ def copy_file(
     immediately after that file is created and before streaming starts. If the
     callback raises, the temporary file is still removed before the exception
     is re-raised.
+
+    When ``on_progress`` is given it is called after every source chunk with
+    the cumulative number of bytes written so far. The callback runs on the
+    copying thread and must be cheap and non-raising.
     """
     source = Path(source)
     destination = Path(destination)
@@ -140,6 +145,8 @@ def copy_file(
                         digest.update(chunk)
                         temp_file.write(chunk)
                         bytes_copied += len(chunk)
+                        if on_progress is not None:
+                            on_progress(bytes_copied)
                 temp_file.flush()
                 os.fsync(temp_file.fileno())
         finally:

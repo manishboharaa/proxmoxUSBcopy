@@ -15,6 +15,7 @@ from passlib.context import CryptContext
 
 DEFAULT_SESSION_MAX_AGE_SECONDS = 12 * 3600
 CSRF_TOKEN_BYTES = 32
+MIN_PASSWORD_LENGTH = 12
 
 _BCRYPT_MAX_PASSWORD_BYTES = 72
 _SESSION_SALT = "usbcopy.session"

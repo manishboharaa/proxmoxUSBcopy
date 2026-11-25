@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+
+{% block content %}
+<div class="page-head" id="top">
+  <div>
+    <h1>Account</h1>
+    <p class="page-sub">Change the dashboard password for the admin account.</p>
+  </div>
+  <div class="page-meta">
+    <span class="chip chip-neutral">Signed in as {{ username }}</span>
+  </div>
+</div>
+
+<section class="panel" aria-labelledby="account-title">
+  <div class="panel-head">
+    <div>
+      <h2 class="panel-title" id="account-title">Change password</h2>
+      <p class="panel-sub">
+        At least {{ min_password_length }} characters. The new password takes
+        effect immediately; other open sessions keep working.
+      </p>
+    </div>
+  </div>
+
+  <form class="account-form" id="password-form" autocomplete="off">
+    <div class="field">
+      <label for="current_password">Current password</label>
+      <input id="current_password" name="current_password" type="password"
+             autocomplete="current-password" required>
+    </div>
+    <div class="field">
+      <label for="new_password">New password</label>
+      <input id="new_password" name="new_password" type="password"
+             autocomplete="new-password" minlength="{{ min_password_length }}" required>
+    </div>
+    <div class="field">
+      <label for="confirm_password">Repeat new password</label>
+      <input id="confirm_password" name="confirm_password" type="password"
+             autocomplete="new-password" required>
+    </div>
+    <p class="form-error" id="password-error" role="alert" hidden></p>
+    <p class="form-note" id="password-note" role="status" aria-live="polite"></p>
+    <button class="btn btn-primary" type="submit">Change password</button>
+  </form>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var minLength = {{ min_password_length }};
+    var form = document.getElementById("password-form");
+    var errorEl = document.getElementById("password-error");
+    var noteEl = document.getElementById("password-note");
+    function fail(message) {
+      errorEl.textContent = message;
+      errorEl.hidden = false;
+      noteEl.textContent = "";
+    }
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      errorEl.hidden = true;
+      noteEl.textContent = "";
+      var current = document.getElementById("current_password").value;
+      var next = document.getElementById("new_password").value;
+      var confirm = document.getElementById("confirm_password").value;
+      if (next !== confirm) {
+        fail("The repeated password does not match the new one.");
+        return;
+      }
+      if (next.length < minLength) {
+        fail("The new password must be at least " + minLength + " characters.");
+        return;
+      }
+      fetch("/api/account/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          current_password: current,
+          new_password: next
+        })
+      }).then(function (result) {
+        return result.json().then(function (body) {
+          return { ok: result.ok, body: body };
+        });
+      }).then(function (result) {
+        if (result.ok) {
+          form.reset();
+          noteEl.textContent =
+            "Password changed. Use the new password at the next sign-in.";
+          return;
+        }
+        fail(result.body.detail || "The password could not be changed.");
+      }).catch(function () {
+        fail("The request failed. Check the connection and try again.");
+      });
+    });
+  })();
+</script>
+{% endblock %}

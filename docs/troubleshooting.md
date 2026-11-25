@@ -233,8 +233,8 @@ To change the port after installation, edit the config inside the CT:
 
 ```bash
 pct exec <ct-id> -- sed -i 's/^port = .*/port = 9090/' /etc/usbcopy/config.toml
-pct exec <ct-id> -- chown root:usbcopy /etc/usbcopy/config.toml
-pct exec <ct-id> -- chmod 0640 /etc/usbcopy/config.toml
+pct exec <ct-id> -- chown usbcopy:usbcopy /etc/usbcopy/config.toml
+pct exec <ct-id> -- chmod 0600 /etc/usbcopy/config.toml
 pct exec <ct-id> -- systemctl restart usbcopy
 pct exec <ct-id> -- systemctl status usbcopy --no-pager
 ```
@@ -388,8 +388,11 @@ not automated in this repository; run them before relying on a new release.
    from the repo folder on a spare CT ID. It creates an unprivileged, on-boot Debian 12
    CT, starts the dashboard, and prints a save-now admin password.
 2. **LAN dashboard:** open `http://<host-ip>:<port>` from another machine,
-   log in, and confirm Overview, Import, Runs, Drives, and About render.
-3. **exFAT drive:** plug in a drive. It appears in Review within a few seconds.
+   log in, and confirm Overview, Import, Runs, Drives, Account, and About render.
+3. **Password change:** on the Account page, change the admin password with the
+   current password plus a new one, sign out, and sign back in with the new
+   password.
+4. **exFAT drive:** plug in a drive. It appears in Review within a few seconds.
    Select a movie folder, start the import, and confirm the files appear under
    Movies with the same names and structure and the run detail shows hashes.
 4. **NTFS drive:** repeat with an NTFS drive. The host mounts it read-only; the

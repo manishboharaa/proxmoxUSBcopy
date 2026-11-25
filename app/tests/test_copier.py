@@ -213,3 +213,30 @@ def test_on_temp_failure_cleans_temp_and_reraises(src, dst):
     assert len(seen) == 1
     assert not dst.exists()
     assert list(dst.parent.glob(".usbcopy.*.part")) == []
+
+
+def test_copy_file_reports_per_chunk_progress(tmp_path):
+    src = tmp_path / "src.bin"
+    payload = bytes(range(256)) * 40  # 10,240 bytes
+    src.write_bytes(payload)
+    progress = []
+
+    result = copy_file(src, tmp_path / "dst.bin", chunk_size=1024,
+                       on_progress=progress.append)
+
+    assert result.bytes_copied == len(payload)
+    assert progress, "on_progress was never called"
+    assert progress[0] == 1024
+    assert progress[-1] == len(payload)
+    assert progress == sorted(progress)
+
+
+def test_copy_file_progress_still_publishes_without_callback(tmp_path):
+    src = tmp_path / "src.bin"
+    payload = b"no callback payload"
+    src.write_bytes(payload)
+
+    result = copy_file(src, tmp_path / "dst.bin", chunk_size=4)
+
+    assert result.bytes_copied == len(payload)
+    assert (tmp_path / "dst.bin").read_bytes() == payload

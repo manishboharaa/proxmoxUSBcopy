@@ -25,8 +25,14 @@ from passlib.exc import UnknownHashError
 from starlette.concurrency import run_in_threadpool
 
 from usbcopy import __version__
-from usbcopy.auth import Session, SessionManager, verify_password
-from usbcopy.config import Config, Destination
+from usbcopy.auth import (
+    MIN_PASSWORD_LENGTH,
+    Session,
+    SessionManager,
+    hash_password,
+    verify_password,
+)
+from usbcopy.config import Config, ConfigError, Destination, set_password_hash
 from usbcopy.db import open_db
 from usbcopy.planner import PlanError, RunPlan, build_run_plan, required_free_bytes
 from usbcopy.runs import create_run
@@ -413,6 +419,58 @@ def build_api_router(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @protected.post("/account/password")
+    async def change_password(request: Request) -> dict[str, str]:
+        """Verify the current password and store a bcrypt hash of the new one."""
+        if config.config_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="this install has no writable config file",
+            )
+        payload = await _request_object(request)
+        current = payload.get("current_password")
+        new = payload.get("new_password")
+        if not isinstance(current, str) or not current:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="current_password must be a non-empty string",
+            )
+        if not isinstance(new, str) or len(new) < MIN_PASSWORD_LENGTH:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "new_password must be at least "
+                    f"{MIN_PASSWORD_LENGTH} characters"
+                ),
+            )
+        if new == current:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="the new password must be different from the current one",
+            )
+        matches = await run_in_threadpool(
+            _password_matches, current, config.password_hash
+        )
+        if not matches:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="the current password is incorrect",
+            )
+        new_hash = await run_in_threadpool(hash_password, new)
+        try:
+            await run_in_threadpool(
+                set_password_hash, config.config_path, new_hash
+            )
+        except ConfigError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(exc),
+            ) from exc
+        # Keep the in-memory hash in sync so later logins and password
+        # changes verify against the new value without a service restart.
+        object.__setattr__(config, "password_hash", new_hash)
+        return {"status": "ok"}
 
     router.include_router(protected)
     return router

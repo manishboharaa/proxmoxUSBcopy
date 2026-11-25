@@ -277,9 +277,11 @@ sys.stdout.write(hash_password(sys.stdin.read()))'
         || { rm -rf -- "$tmp_dir"; die "could not render config.toml"; }
     pct push "$CT_ID" "$tmp_dir/config.toml" "$APP_CT_CONFIG" \
         || { rm -rf -- "$tmp_dir"; die "could not push config.toml to CT $CT_ID"; }
-    ct_exec chown root:usbcopy "$APP_CT_CONFIG" \
+    # The app rewrites this file when the admin changes the password, so it
+    # must be owned (and only readable) by the usbcopy account.
+    ct_exec chown usbcopy:usbcopy "$APP_CT_CONFIG" \
         || { rm -rf -- "$tmp_dir"; die "could not set config.toml ownership"; }
-    ct_exec chmod 0640 "$APP_CT_CONFIG" \
+    ct_exec chmod 0600 "$APP_CT_CONFIG" \
         || { rm -rf -- "$tmp_dir"; die "could not set config.toml mode"; }
     USBC_CONTAINER_FILES+=("$APP_CT_CONFIG")
 
@@ -344,6 +346,13 @@ update_app() {
     ct_exec "$APP_CT_DIR/venv/bin/pip" install --disable-pip-version-check \
         -r "$APP_CT_DIR/requirements.txt" \
         || die "pip install failed in CT $CT_ID"
+
+    # Installs from before password changes existed left the config owned by
+    # root; the app now needs to rewrite it when the password is changed.
+    ct_exec chown usbcopy:usbcopy "$APP_CT_CONFIG" \
+        || die "could not set config.toml ownership in CT $CT_ID"
+    ct_exec chmod 0600 "$APP_CT_CONFIG" \
+        || die "could not set config.toml mode in CT $CT_ID"
 
     ct_exec systemctl restart usbcopy.service \
         || die "could not restart usbcopy.service in CT $CT_ID"

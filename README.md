@@ -225,7 +225,8 @@ install is blocked only when a manifest already exists.
 
 Open `http://<ct-ip>:<dashboard-port>/` in a browser and log in as `admin` with
 the password from the installer. The installer prints the actual IP and port;
-the default port is 8088.
+the default port is 8088. Change the password any time on the **Account** page
+(current password plus the new one, minimum 12 characters).
 
 The dashboard is meant for a trusted LAN. It has no built-in HTTPS and only one
 admin account. If you need remote access, put it behind a reverse proxy you
@@ -274,8 +275,8 @@ remaining items are cancelled. No final-name half files are left behind.
 ### Configuration
 
 Settings are not edited in the dashboard. The installer writes
-`/etc/usbcopy/config.toml` inside the container (mode 0640, owner
-`root:usbcopy`) and keeps the database at `/var/lib/usbcopy/usbcopy.db`. The
+`/etc/usbcopy/config.toml` inside the container (mode 0600, owner
+`usbcopy:usbcopy`) and keeps the database at `/var/lib/usbcopy/usbcopy.db`. The
 About page shows the loaded paths and log commands. If you change the config,
 restart the app and keep the file private because it contains the password hash
 and session secret.

@@ -462,3 +462,97 @@ def test_sse_endpoint_streams_terminal_run(
     frames = [part for part in response.text.split("\n\n") if part]
     assert len(frames) == 1
     assert frame_payload(frames[0] + "\n\n")["status"] == "completed"
+
+
+def test_change_password_updates_config_and_allows_new_login(
+    client: TestClient, config, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f'password_hash = "{config.password_hash}"\n', encoding="utf-8"
+    )
+    config_path.chmod(0o600)
+    object.__setattr__(config, "config_path", config_path)
+    new_password = "brand new stable passphrase"
+
+    assert client.post("/api/login", json={"username": "admin", "password": PASSWORD}).status_code == 200
+
+    response = client.post(
+        "/api/account/password",
+        json={"current_password": PASSWORD, "new_password": new_password},
+    )
+    assert response.status_code == 200, response.text
+    assert config_path.read_text().startswith('password_hash = "$2')
+    assert "brand new stable passphrase" not in config_path.read_text()
+
+    verify = client.post(
+        "/api/account/password",
+        json={"current_password": new_password, "new_password": "another ok password"},
+    )
+    assert verify.status_code == 200
+
+
+def test_change_password_requires_the_session_cookie(config, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'password_hash = "{config.password_hash}"\n')
+    object.__setattr__(config, "config_path", config_path)
+    app = create_app(config, start_background=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/account/password",
+        json={"current_password": PASSWORD, "new_password": "another ok password"},
+    )
+    assert response.status_code in (401, 303)
+
+
+def test_change_password_rejects_wrong_current_password(client: TestClient, config, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'password_hash = "{config.password_hash}"\n')
+    object.__setattr__(config, "config_path", config_path)
+    post_login(client)
+
+    response = client.post(
+        "/api/account/password",
+        json={"current_password": "wrong current password", "new_password": "another ok password"},
+    )
+    assert response.status_code == 403
+    assert config_path.read_text() == f'password_hash = "{config.password_hash}"\n'
+
+
+def test_change_password_enforces_minimum_length(client: TestClient, config, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'password_hash = "{config.password_hash}"\n')
+    object.__setattr__(config, "config_path", config_path)
+    post_login(client)
+
+    response = client.post(
+        "/api/account/password",
+        json={"current_password": PASSWORD, "new_password": "short"},
+    )
+    assert response.status_code == 422
+    assert "at least 12" in response.json()["detail"]
+
+
+def test_change_password_rejects_same_password(client: TestClient, config, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'password_hash = "{config.password_hash}"\n')
+    object.__setattr__(config, "config_path", config_path)
+    post_login(client)
+
+    response = client.post(
+        "/api/account/password",
+        json={"current_password": PASSWORD, "new_password": PASSWORD},
+    )
+    assert response.status_code == 422
+
+
+def test_account_page_requires_login_and_renders_when_signed_in(client: TestClient):
+    anonymous = client.get("/account", follow_redirects=False)
+    assert anonymous.status_code == 303
+    assert anonymous.headers["location"] == "/login"
+
+    post_login(client)
+    page = client.get("/account")
+    assert page.status_code == 200
+    assert "Change password" in page.text
