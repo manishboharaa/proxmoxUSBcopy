@@ -19,6 +19,7 @@ Install proxmoxUSBcopy on a Proxmox VE host.
   --dry-run        Print the plan without changing the host
   --yes            Accept defaults
   --uninstall      Run setup/uninstall.sh
+  --destroy-ct     With --uninstall: also stop and destroy the CT
   -h, --help       Show this help
 
 Piped installs need an https:// repository URL (no embedded credentials).
@@ -161,10 +162,11 @@ LIB_DIR="$SCRIPT_DIR/lib"
 DRY_RUN=0
 ASSUME_YES=0
 UNINSTALL=0
+UNINSTALL_DESTROY_CT=0
 
 # The helper files are separate shellcheck inputs; cross-file globals and
 # source resolution are expected here.
-# shellcheck disable=SC1091
+# shellcheck disable=SC1091,SC2034
 source "$LIB_DIR/common.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/preflight.sh"
@@ -178,6 +180,8 @@ source "$LIB_DIR/app.sh"
 source "$LIB_DIR/host.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/manifest.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/rollback.sh"
 
 usage() {
     cat <<EOF
@@ -191,6 +195,7 @@ Options:
   --dry-run        Run read-only preflight, prompts, and print the plan only
   --yes            Accept defaults; read answers from USBC_ANSWERS when set
   --uninstall      Run setup/uninstall.sh instead of installing
+  --destroy-ct     With --uninstall: also stop and destroy the CT
   -h, --help       Show this help
 EOF
 }
@@ -226,6 +231,10 @@ parse_args() {
                 ;;
             --uninstall)
                 UNINSTALL=1
+                shift
+                ;;
+            --destroy-ct)
+                UNINSTALL_DESTROY_CT=1
                 shift
                 ;;
             -h | --help)
@@ -385,10 +394,25 @@ print_plan() {
     plan "$auto_line"
 }
 
+run_stage() {
+    local stage=$1
+
+    shift
+    "$stage" "$@"
+    if [[ ${USBC_FAIL_AT:-${FAKE_FAIL_AT:-}} == "$stage" ]]; then
+        log "simulated failure at $stage (USBC_FAIL_AT/FAKE_FAIL_AT test hook)"
+        return 1
+    fi
+}
+
 main() {
     local forward=()
 
     parse_args "$@"
+
+    if ((UNINSTALL_DESTROY_CT == 1 && UNINSTALL == 0)); then
+        die "--destroy-ct is only valid with --uninstall"
+    fi
 
     if ((UNINSTALL == 1)); then
         if [[ ! -x $SCRIPT_DIR/uninstall.sh ]]; then
@@ -399,6 +423,9 @@ main() {
         fi
         if ((ASSUME_YES == 1)); then
             forward+=(--yes)
+        fi
+        if ((UNINSTALL_DESTROY_CT == 1)); then
+            forward+=(--destroy-ct)
         fi
         exec "$SCRIPT_DIR/uninstall.sh" "${forward[@]}"
     fi
@@ -429,11 +456,18 @@ main() {
 
     manifest_check_absent
     announce_generated_password
-    create_ct
-    install_app
-    configure_host
-    verify_permissions
-    write_manifest
+    set -E
+    # shellcheck disable=SC2034
+    USBC_ERR_HANDLER=rollback_on_error
+    trap 'rollback_on_error $?' ERR
+    run_stage create_ct
+    run_stage install_app
+    run_stage configure_host
+    run_stage verify_permissions
+    run_stage write_manifest
+    trap - ERR
+    # shellcheck disable=SC2034
+    USBC_ERR_HANDLER=''
     print_install_result
 }
 

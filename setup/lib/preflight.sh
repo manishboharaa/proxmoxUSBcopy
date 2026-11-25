@@ -20,6 +20,10 @@ preflight_root() {
         warn "not running as root; a real install requires root (dry-run continues)"
         return 0
     fi
+    if [[ ${USBC_TEST_MODE:-0} == 1 && -n ${USBC_FAIL_AT:-${FAKE_FAIL_AT:-}} ]]; then
+        warn "test mode: bypassing the root check for failure injection (never use USBC_TEST_MODE on a real host)"
+        return 0
+    fi
     die "must be run as root (EUID 0)"
 }
 
@@ -120,6 +124,8 @@ preflight_bridge() {
     if [[ ! -d /sys/class/net/$CT_BRIDGE ]]; then
         if ((DRY_RUN == 1)); then
             warn "bridge $CT_BRIDGE is not present on this host; dry-run assumes it exists"
+        elif [[ ${USBC_TEST_MODE:-0} == 1 && -n ${USBC_FAIL_AT:-${FAKE_FAIL_AT:-}} ]]; then
+            warn "test mode: assuming bridge $CT_BRIDGE exists for failure injection (never use USBC_TEST_MODE on a real host)"
         else
             die "network bridge $CT_BRIDGE not found"
         fi

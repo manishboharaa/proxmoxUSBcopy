@@ -61,6 +61,14 @@ warn() {
 
 die() {
     printf '%s: error: %s\n' "$PROG" "$*" >&2
+    # A die inside a command substitution runs in a subshell. Let that subshell
+    # exit non-zero so the parent's ERR trap performs the single rollback.
+    if [[ ${BASHPID:-$$} != "$$" ]]; then
+        exit 1
+    fi
+    if [[ -n ${USBC_ERR_HANDLER:-} ]] && [[ $(type -t "$USBC_ERR_HANDLER") == function ]]; then
+        "$USBC_ERR_HANDLER" 1
+    fi
     exit 1
 }
 
