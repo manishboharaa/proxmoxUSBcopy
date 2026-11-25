@@ -230,7 +230,8 @@ the default port is 8088. Change the password any time on the **Account** page
 
 The dashboard is meant for a trusted LAN. It has no built-in HTTPS and only one
 admin account. If you need remote access, put it behind a reverse proxy you
-control.
+control. A run that is queued or copying can be cancelled from its run page
+under **Runs**; already-copied files stay, the rest is marked as interrupted.
 
 Pages:
 

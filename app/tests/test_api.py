@@ -556,3 +556,65 @@ def test_account_page_requires_login_and_renders_when_signed_in(client: TestClie
     page = client.get("/account")
     assert page.status_code == 200
     assert "Change password" in page.text
+
+
+def _seed_run(conn):
+    from usbcopy.planner import PlanItem, RunPlan
+    from usbcopy.runs import create_run
+
+    plan = RunPlan(
+        items=[PlanItem("Movies/Heat.mkv", "Heat (1995)/Heat.mkv", 2)],
+        skipped=[],
+        warnings=[],
+        total_bytes=2,
+    )
+    return create_run(conn, 1, None, "movies", "review", plan)
+
+
+def _login_and_csrf(client: TestClient) -> str:
+    body = post_login(client).json()
+    return body["csrf"]
+
+
+def test_cancel_endpoint_interrupts_a_queued_run(client: TestClient, conn):
+    from usbcopy import worker as worker_module
+
+    run_id = _seed_run(conn)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/api/runs/{run_id}/cancel", json={"csrf": csrf}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "cancelled"}
+    run = conn.execute("SELECT status FROM runs WHERE id = ?", (run_id,)).fetchone()
+    assert run["status"] == "interrupted"
+    items = conn.execute(
+        "SELECT status FROM run_items WHERE run_id = ?", (run_id,)
+    ).fetchall()
+    assert [row["status"] for row in items] == [
+        worker_module.CANCELLED.lower()
+    ]
+
+
+def test_cancel_endpoint_rejects_a_finished_run(client: TestClient, conn):
+    run_id = _seed_run(conn)
+    conn.execute(
+        "UPDATE runs SET status = 'completed' WHERE id = ?", (run_id,)
+    )
+    conn.commit()
+    csrf = _login_and_csrf(client)
+
+    response = client.post(f"/api/runs/{run_id}/cancel", json={"csrf": csrf})
+
+    assert response.status_code == 409
+
+
+def test_cancel_endpoint_requires_csrf(client: TestClient, conn):
+    run_id = _seed_run(conn)
+    _login_and_csrf(client)
+
+    response = client.post(f"/api/runs/{run_id}/cancel", json={"csrf": "nope"})
+
+    assert response.status_code == 403

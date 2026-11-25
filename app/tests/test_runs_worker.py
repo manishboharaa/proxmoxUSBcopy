@@ -772,3 +772,97 @@ def test_run_progress_moves_during_a_single_large_file(
     assert any(db_bytes >= 1024 * 1024 for db_bytes in mid_file_db_bytes), (
         f"run bytes_done did not move mid-file: {mid_file_db_bytes}"
     )
+
+
+def test_cancel_during_copy_aborts_the_in_flight_file(
+    conn, config, dirs, monkeypatch
+):
+    """A cancel raised mid-file finishes the run as interrupted, not failed."""
+    source = dirs["source"] / "Movies" / "Heat (1995)" / "Heat.mkv"
+    payload = b"x" * (3 * 1024 * 1024)
+    source.write_bytes(payload)
+    plan = RunPlan(
+        items=[PlanItem(str(source), "Heat (1995)/Heat.mkv", len(payload))],
+        skipped=[],
+        warnings=[],
+        total_bytes=len(payload),
+    )
+    config = dataclasses.replace(config, chunk_size_mb=1)
+    cancel = threading.Event()
+    real_copy = worker_module.copy_file
+    copied_chunks: list[int] = []
+
+    def cancel_after_first_chunk(source, destination, **kwargs):
+        original = kwargs.get("on_progress")
+
+        def wrapped(partial):
+            copied_chunks.append(partial)
+            if partial >= 1024 * 1024:
+                cancel.set()
+            if original is not None:
+                original(partial)
+
+        kwargs["on_progress"] = wrapped
+        return real_copy(source, destination, **kwargs)
+
+    monkeypatch.setattr(worker_module, "copy_file", cancel_after_first_chunk)
+
+    run_id = create_run(conn, None, None, "movies", "review", plan)
+    execute_run(conn, run_id, config, {"movies": dirs["movies"]}, cancel)
+
+    assert get_run(conn, run_id)["status"] == "interrupted"
+    assert copied_chunks, "copy never started"
+    assert max(copied_chunks) < len(payload), "copy ran to completion"
+    temp_files = list(dirs["movies"].rglob(".usbcopy.*.part"))
+    assert not temp_files, f"temp files left behind: {temp_files}"
+
+
+def test_mark_run_interrupted_cancels_a_queued_run(conn, plan):
+    run_id = create_run(conn, None, None, "movies", "review", plan)
+
+    assert worker_module.mark_run_interrupted(conn, run_id) is True
+
+    run = get_run(conn, run_id)
+    assert run["status"] == "interrupted"
+    assert [item["status"] for item in _items(conn, run_id)] == ["cancelled"]
+
+
+def test_mark_run_interrupted_refuses_a_running_run(conn, plan):
+    run_id = create_run(conn, None, None, "movies", "review", plan)
+    conn.execute("UPDATE runs SET status = 'running' WHERE id = ?", (run_id,))
+    conn.commit()
+
+    assert worker_module.mark_run_interrupted(conn, run_id) is False
+    assert get_run(conn, run_id)["status"] == "running"
+
+
+def test_worker_cancel_current_matches_only_its_own_run(config, dirs):
+    worker = worker_module.RunWorker(config.db_path, config, {"movies": dirs["movies"]})
+    worker._current_run_id = 7
+
+    assert worker.cancel_current(7) is True
+    assert worker.cancel_event.is_set()
+    assert worker.cancel_current(8) is False
+
+
+def test_worker_clears_a_stale_cancel_before_the_next_run(
+    conn, config, dirs, monkeypatch
+):
+    """A cancel left over from the previous run must not kill the next."""
+    plan = _plan_for(dirs, [("one.mkv", "one.mkv"), ("two.mkv", "two.mkv")])
+    worker = worker_module.RunWorker(config.db_path, config, {"movies": dirs["movies"]})
+    worker.cancel_event.set()
+    started: list[int] = []
+    real_execute = worker_module.execute_run
+
+    def recording(conn, run_id, cfg, roots, cancel_event):
+        started.append(cancel_event.is_set())
+        return real_execute(conn, run_id, cfg, roots, cancel_event)
+
+    monkeypatch.setattr(worker_module, "execute_run", recording)
+    first = create_run(conn, None, None, "movies", "review", plan)
+    second = create_run(conn, None, None, "movies", "review", plan)
+    worker._process(first)
+    worker._process(second)
+
+    assert started == [False, False]

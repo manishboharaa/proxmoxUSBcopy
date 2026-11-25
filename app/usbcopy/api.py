@@ -41,6 +41,7 @@ from usbcopy.web import (
     clear_session_cookie,
     set_session_cookie,
 )
+from usbcopy.worker import mark_run_interrupted
 
 logger = logging.getLogger(__name__)
 
@@ -117,12 +118,16 @@ def build_api_router(
     session_manager: SessionManager,
     *,
     enqueue_run: Callable[[int], None] | None = None,
+    cancel_run: Callable[[int], bool] | None = None,
 ) -> APIRouter:
     """Build the ``/api`` router, public login plus session-protected routes.
 
     ``enqueue_run`` receives the id of each newly committed import run. The
     default is a warning-only no-op so the app can run without a worker (for
     example in tests or before Task 13 wires ``RunWorker.enqueue``).
+    ``cancel_run`` asks the worker to stop the run it is executing right
+    now; without it a running run can only be interrupted by marking it in
+    the database directly (which is what happens in tests).
     """
     require_session = build_require_session(session_manager)
     enqueue = enqueue_run if enqueue_run is not None else _warn_unhandled_enqueue
@@ -471,6 +476,51 @@ def build_api_router(
         # changes verify against the new value without a service restart.
         object.__setattr__(config, "password_hash", new_hash)
         return {"status": "ok"}
+
+    @protected.post("/runs/{run_id}/cancel")
+    def cancel_run_endpoint(
+        run_id: int,
+        payload: Annotated[dict[str, Any], Depends(_request_object)],
+        conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+        session: Annotated[Session, Depends(require_session)],
+    ) -> dict[str, str]:
+        if not _csrf_matches(payload.get("csrf"), session.csrf):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="invalid CSRF token",
+            )
+        row = conn.execute(
+            "SELECT status FROM runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown run: {run_id}",
+            )
+        if row["status"] in TERMINAL_RUN_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="this run has already finished",
+            )
+        if row["status"] == "running" and cancel_run is not None:
+            if cancel_run(run_id):
+                return {"status": "cancelling"}
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="this run has already finished",
+            )
+        if not mark_run_interrupted(conn, run_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="this run has already finished",
+            )
+        conn.execute(
+            "INSERT INTO audit (actor, action, detail_json) VALUES "
+            "(?, 'run_cancel', ?)",
+            (session.username, json.dumps({"run_id": run_id}, sort_keys=True)),
+        )
+        conn.commit()
+        return {"status": "cancelled"}
 
     router.include_router(protected)
     return router

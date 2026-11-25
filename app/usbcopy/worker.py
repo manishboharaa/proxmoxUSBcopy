@@ -120,11 +120,7 @@ def execute_run(
                 source_root,
                 dest_root,
                 cancel_event,
-                # Bind the pre-item total now so the callback reports
-                # base + in-flight bytes for exactly this item.
-                progress_cb=lambda partial, base=bytes_done: progress.persist(
-                    base + partial
-                ),
+                progress_cb=_progress_reporter(cancel_event, progress, bytes_done),
             )
             if outcome == CANCELLED:
                 _cancel_items(conn, items[index + 1 :])
@@ -230,6 +226,9 @@ def _copy_item(
                 on_temp=lambda temp: _record_temp_path(conn, item_id, temp),
                 on_progress=progress_cb,
             )
+        except _RunCancelled:
+            _finish_item(conn, item_id, "interrupted", error="cancelled")
+            return CANCELLED, 0
         except (CopyError, OSError) as exc:
             last_error = exc
             if cancel_event.is_set():
@@ -257,6 +256,39 @@ def _copy_item(
 def _backoff(failed_attempt: int) -> float:
     index = min(failed_attempt - 1, len(_BACKOFF_SECONDS) - 1)
     return _BACKOFF_SECONDS[index]
+
+
+class _RunCancelled(Exception):
+    """Raised from the progress callback to abort the in-flight copy."""
+
+
+def _raise_if_cancelled(cancel_event: threading.Event) -> None:
+    """Raise ``_RunCancelled`` when the run was asked to stop.
+
+    Called from the copy progress callback so a large in-flight file can be
+    aborted within one chunk instead of at the next item boundary.
+    """
+    if cancel_event.is_set():
+        raise _RunCancelled()
+
+
+def _progress_reporter(
+    cancel_event: threading.Event,
+    progress: _RunProgress,
+    base_bytes: int,
+) -> Callable[[int], None]:
+    """Build the per-chunk progress callback for one item.
+
+    ``base_bytes`` is the run total copied before this item started, so the
+    callback reports ``base + partial``. Binding it here keeps the closure
+    from seeing a later loop iteration's ``bytes_done``.
+    """
+
+    def on_progress(partial: int) -> None:
+        _raise_if_cancelled(cancel_event)
+        progress.persist(base_bytes + partial)
+
+    return on_progress
 
 
 def _source_root(conn: sqlite3.Connection, run: sqlite3.Row) -> Path | None:
@@ -389,6 +421,32 @@ def _cancel_items(conn: sqlite3.Connection, items: list[sqlite3.Row]) -> None:
     conn.commit()
 
 
+def mark_run_interrupted(conn: sqlite3.Connection, run_id: int) -> bool:
+    """Mark a not-yet-running run as interrupted; return False if it is not.
+
+    Used to cancel a queued run before the worker dequeues it. The run row
+    and its pending items are closed so the worker skips it cleanly.
+    """
+    cursor = conn.execute(
+        "UPDATE runs "
+        f"SET status = 'interrupted', error = 'cancelled before it started', "
+        f"finished_at = {_NOW} "
+        "WHERE id = ? AND status = 'queued'",
+        (run_id,),
+    )
+    if cursor.rowcount == 0:
+        conn.rollback()
+        return False
+    conn.execute(
+        "UPDATE run_items "
+        f"SET status = 'cancelled', finished_at = {_NOW} "
+        "WHERE run_id = ? AND status IN ('pending', 'queued')",
+        (run_id,),
+    )
+    conn.commit()
+    return True
+
+
 class RunWorker:
     """Single-threaded FIFO worker that executes one run at a time."""
 
@@ -410,6 +468,7 @@ class RunWorker:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._run_lock = threading.Lock()
+        self._current_run_id: int | None = None
 
     def start(self) -> None:
         with self._lock:
@@ -454,6 +513,11 @@ class RunWorker:
 
     def _process(self, run_id: int) -> None:
         with self._run_lock:
+            self._current_run_id = run_id
+            # A cancel pressed while the previous run was finishing must
+            # never leak into this run; direct ``execute_run`` callers
+            # manage the event themselves.
+            self.cancel_event.clear()
             try:
                 conn = open_db(self.db_path)
             except Exception:
@@ -472,4 +536,19 @@ class RunWorker:
             except Exception:
                 logger.exception("run %s failed", run_id)
             finally:
+                self._current_run_id = None
                 conn.close()
+
+    def cancel_current(self, run_id: int) -> bool:
+        """Ask the executor to stop the run it is copying right now.
+
+        Returns ``False`` when that run is not the one executing (it already
+        finished, or it is still queued and should be cancelled in the
+        database instead). The run then finishes as ``interrupted`` at the
+        next item or chunk boundary.
+        """
+        with self._lock:
+            if self._current_run_id != int(run_id):
+                return False
+        self.cancel_event.set()
+        return True

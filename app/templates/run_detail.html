@@ -10,6 +10,12 @@
   </div>
   <div class="page-meta">
     <span class="chip {{ run.chip }}">{{ run.status }}</span>
+    {% if run.active %}
+    <button class="btn btn-danger" id="cancel-run" type="button"
+            data-run-id="{{ run.run_id }}" data-csrf="{{ csrf_token }}">
+      Cancel run
+    </button>
+    {% endif %}
     <a class="btn btn-quiet" href="/runs">Back to runs</a>
   </div>
 </div>
@@ -27,6 +33,19 @@
     <span class="chip {{ run.chip }}">{{ run.status }}</span>
   </div>
   <dl class="meta-grid">
+    {% if run.active %}
+    <div class="run-progress-panel" data-run-progress="{{ run.run_id }}">
+      <div class="blocks blocks-progress" role="progressbar" aria-label="Copy progress"
+           aria-valuemin="0" aria-valuemax="100"
+           aria-valuenow="{% if run.bytes_total > 0 %}{{ ((run.bytes_done * 100) / run.bytes_total) | round | int }}{% else %}0{% endif %}">
+        {% for index in range(40) %}<span class="blk"></span>{% endfor %}
+      </div>
+      <div class="progress-meta">
+        <span class="mono" data-run-done>{{ run.copied_text }}</span>
+        <span class="mono" data-run-percent>—</span>
+      </div>
+    </div>
+    {% endif %}
     <div>
       <dt>Destination</dt>
       <dd>{{ run.destination }} <span class="mono">{{ run.destination_path }}</span></dd>
@@ -164,5 +183,83 @@
     {% endif %}
   </div>
 </section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if run and run.active %}
+<script>
+  (function () {
+    var runId = "{{ run.run_id }}";
+    var meter = document.querySelector('[data-run-progress="' + runId + '"]');
+    var cancelBtn = document.getElementById("cancel-run");
+    var terminal = {
+      completed: 1, completed_with_errors: 1, failed: 1, interrupted: 1
+    };
+    function formatBytes(value) {
+      if (!isFinite(value) || value <= 0) return "0 B";
+      var units = ["B", "KB", "MB", "GB", "TB"];
+      var index = 0;
+      while (value >= 1000 && index < units.length - 1) {
+        value /= 1000; index += 1;
+      }
+      return Math.round(value) + " " + units[index];
+    }
+    function render(done, total) {
+      if (meter) {
+        var blocks = meter.querySelectorAll(".blk");
+        var percent = total > 0 ? Math.round((done * 100) / total) : 0;
+        percent = Math.max(0, Math.min(100, percent));
+        meter.setAttribute("aria-valuenow", String(percent));
+        var filled = Math.round((percent * blocks.length) / 100);
+        for (var index = 0; index < blocks.length; index += 1) {
+          blocks[index].className = index < filled ? "blk is-on" : "blk";
+        }
+        var doneEl = meter.querySelector("[data-run-done]");
+        var percentEl = meter.querySelector("[data-run-percent]");
+        if (doneEl) doneEl.textContent = formatBytes(done) + " of " + formatBytes(total);
+        if (percentEl) percentEl.textContent = percent + "%";
+      }
+    }
+    function finish() {
+      if (cancelBtn) cancelBtn.remove();
+      window.location.reload();
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", function () {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = "Cancelling…";
+        fetch("/api/runs/" + runId + "/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ csrf: cancelBtn.getAttribute("data-csrf") })
+        }).then(function (result) {
+          if (result.ok) return;
+          return result.json().then(function (body) {
+            throw new Error(body.detail || "Could not cancel the run.");
+          });
+        }).catch(function (error) {
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = "Cancel run";
+          window.alert(error.message || "Could not cancel the run.");
+        });
+      });
+    }
+    if (meter && window.EventSource) {
+      var source = new EventSource("/api/events/stream?run_id=" + encodeURIComponent(runId));
+      source.onmessage = function (event) {
+        var snapshot;
+        try { snapshot = JSON.parse(event.data); } catch (error) { return; }
+        render(Number(snapshot.bytes_done) || 0, Number(snapshot.bytes_total) || 0);
+        if (terminal[snapshot.status]) {
+          source.close();
+          finish();
+        }
+      };
+      source.onerror = function () { source.close(); };
+    }
+  })();
+</script>
 {% endif %}
 {% endblock %}

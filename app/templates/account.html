@@ -33,6 +33,7 @@
       <label for="new_password">New password</label>
       <input id="new_password" name="new_password" type="password"
              autocomplete="new-password" minlength="{{ min_password_length }}" required>
+      <span class="account-hint">At least {{ min_password_length }} characters.</span>
     </div>
     <div class="field">
       <label for="confirm_password">Repeat new password</label>

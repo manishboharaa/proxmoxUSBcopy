@@ -410,7 +410,7 @@ def _empty_overview_context(config: Config, error: str) -> dict[str, Any]:
         "drive_chip": ("chip-neutral", "Unavailable"),
         "kpis": [
             {"label": "Copied today", "value": "—", "unit": "", "note": error},
-            {"label": "Average write speed", "value": "—", "unit": "", "note": error},
+            {"label": "Average write speed", "value": "—", "unit": "", "key": "write_speed", "note": error},
             {"label": "Library free", "value": "—", "unit": "", "note": error},
             {"label": "Needs attention", "value": "—", "note": error, "attention": False},
         ],
@@ -960,6 +960,10 @@ def _run_detail_context(
         "started": started,
         "finished": finished,
         "error": row["error"] or "",
+        "raw_status": str(row["status"]),
+        "active": str(row["status"]) in ("queued", "running"),
+        "bytes_done": int(row["bytes_done"] or 0),
+        "bytes_total": int(row["bytes_total"] or 0),
     }
     return {
         "run": run,
@@ -1323,6 +1327,7 @@ def _kpis(
             "label": "Average write speed",
             "value": f"{speed:,}" if speed is not None else "—",
             "unit": "MB/s" if speed is not None else "",
+            "key": "write_speed",
             "note": (
                 f"Across {_count(timed_runs, 'completed run')} "
                 "in the last 24 hours."

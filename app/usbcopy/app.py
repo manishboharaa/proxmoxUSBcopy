@@ -325,7 +325,12 @@ def create_app(
         build_page_router(config, session_manager, app.state.templates)
     )
     app.include_router(
-        build_api_router(config, session_manager, enqueue_run=api_enqueue)
+        build_api_router(
+            config,
+            session_manager,
+            enqueue_run=api_enqueue,
+            cancel_run=(worker.cancel_current if worker is not None else None),
+        )
     )
 
     @app.get("/healthz")
