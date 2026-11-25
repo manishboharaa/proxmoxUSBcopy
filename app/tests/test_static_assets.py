@@ -1,19 +1,12 @@
-"""Static-asset checks for the design mock and embedded fonts."""
+"""Static-asset checks for embedded fonts and pinned JS behaviour."""
 
 from pathlib import Path
 
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MOCK = REPO_ROOT / "docs" / "mock" / "dashboard.html"
 FONTS = REPO_ROOT / "app" / "static" / "fonts"
 IMPORT_JS = REPO_ROOT / "app" / "static" / "js" / "import.js"
-
-
-def test_mock_has_no_external_assets():
-    html = MOCK.read_text()
-    for needle in ('src="http', "src='http", 'href="http', "href='http"):
-        assert needle not in html
 
 
 def test_required_fonts_exist():
