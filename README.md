@@ -144,8 +144,8 @@ string consumed in prompt order:
 CTID hostname storage disk-GB RAM-MB cores network movies series extra source auto port [password]
 ```
 
-That is 13 required tokens plus an optional 14th password token. Omit the
-password to generate one. Swap is forced to 512 MB and is not prompted.
+That is 14 tokens when you supply the optional password: 13 required tokens
+plus the 14th password token. Omit the password to generate one. Swap is forced to 512 MB and is not prompted.
 `--yes` skips the confirmation summary without consuming an answer token.
 Movies and Series are required, so `USBC_ANSWERS` must include them. For DHCP,
 `network` is the single token `dhcp`. For static networking, use `static` and

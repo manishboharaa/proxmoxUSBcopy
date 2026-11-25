@@ -142,8 +142,9 @@ def test_readme_documents_exact_noninteractive_answer_stream():
         "CTID hostname storage disk-GB RAM-MB cores network movies series "
         "extra source auto port [password]"
     ) in text
+    assert "14 tokens when you supply the optional password" in prose
     assert "13 required tokens" in prose
-    assert "optional 14th password token" in prose
+    assert "14th password token" in prose
     assert "swap is forced to 512 mb" in prose
     assert "static networking" in prose
     assert "three more tokens" in prose
