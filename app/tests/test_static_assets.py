@@ -130,9 +130,11 @@ def test_readme_states_source_and_copy_safety():
 def test_readme_has_no_placeholder_install_commands():
     text = README.read_text().lower()
     assert "<owner>" not in text
-    assert "git clone" not in text
-    assert "raw.githubusercontent.com" not in text
-    assert "curl -fssl" not in text
+    assert (
+        "https://raw.githubusercontent.com/manishboharaa/proxmoxusbcopy/main/setup/install.sh"
+        in text
+    )
+    assert "curl -fssl" in text
 
 
 def test_readme_documents_exact_noninteractive_answer_stream():

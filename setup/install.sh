@@ -445,7 +445,12 @@ main() {
     preflight_bridge
     preflight_ct_ids
 
-    collect_answers "$(default_image_storage)" "$(next_free_ct_id)"
+    if noninteractive; then
+        collect_answers "$(default_image_storage)" "$(next_free_ct_id)"
+    else
+        menu_defaults "$(default_image_storage)" "$(next_free_ct_id)"
+        show_settings_menu
+    fi
     validate_admin_password "$ADMIN_PASSWORD"
     preflight_destinations
     print_plan

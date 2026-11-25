@@ -94,35 +94,55 @@ bootstrap; a checkout install uses the files in the working tree.
 
 ### What the installer asks
 
-The prompts appear in this order:
+Interactive installs start from a table of defaults instead of a wall of
+questions:
 
-1. **CT ID** - defaults to the next free ID.
-2. **Hostname** - defaults to `usbcopy`.
-3. **Storage for the CT disk** - `local-lvm` when it supports container
-   images, otherwise the first storage that does.
-4. **Disk size** - 8 GB by default.
-5. **RAM** - 1024 MB by default.
-6. **CPU cores** - 2 by default.
-7. **Swap** - 512 MB by default.
-8. **Network** - DHCP by default, or a static IP with prefix, gateway, and
-   optional DNS servers.
-9. **Movies destination folder on the host** - required. It must be a local
-   path; the installer creates it when needed and checks that it is writable.
-10. **Series destination folder on the host** - required, same rules.
-11. **Optional extra destination folder** - blank to skip. If set, it becomes
-    another destination profile in the dashboard.
-12. **Default source folder for Auto mode** - Auto mode requires a folder here.
-    Review always opens at the drive root; this setting does not change Review.
-13. **Auto mode** - No by default. If enabled, that source folder is copied into
-    the configured auto destination (Movies by default) when a drive appears.
-14. **Dashboard port** - 8088 by default. The installer checks that the port is
-    free inside the new container and falls back to the first free port from
-    8088 to 8188 if it is taken.
-15. **Admin password** - blank generates a random password. The password is
-    printed once, immediately after you confirm the summary and before the
-    container is created. Save it before continuing.
-16. **Confirmation summary** - shows every setting and planned change. Answer no
-    to stop without changing anything.
+```
+install.sh: ready to install. These settings will be used:
+
+  1. CT ID ............. 101                8. Network ............. DHCP (bridge vmbr0)
+  2. Hostname .......... usbcopy             9. Movies destination .. (not set - required)
+  3. Storage ........... data               10. Series destination . (not set - required)
+  4. Disk size ......... 8 GB               11. Extra destination .. none
+  5. RAM ............... 1024 MB            12. Auto-mode source ... whole drive
+  6. CPU cores ......... 2                  13. Dashboard port ..... 8088
+  7. Swap .............. 512 MB             14. Admin password ..... auto-generate
+
+Press Enter to install with these settings, or type a number to change it.
+You can change as many as you like, one at a time.
+```
+
+Press Enter to install with the defaults, or type a number and answer the
+follow-up for that one setting; the table is shown again after every change.
+A wrong answer (a storage name that does not exist, an in-use CT ID, a bad
+IP) is reported and asked again instead of ending the install. Movies and
+Series destinations are required; the installer points you at menu items 9
+and 10 until both are set. The individual settings:
+
+- **CT ID** - defaults to the next free ID.
+- **Hostname** - defaults to `usbcopy`.
+- **Storage for the CT disk** - `local-lvm` when it supports container
+  images, otherwise the first storage that does.
+- **Disk size, RAM, CPU cores, Swap** - 8 GB, 1024 MB, 2 cores, 512 MB.
+- **Network** - DHCP by default, or a static IP with prefix, gateway, and
+  optional DNS servers.
+- **Movies destination folder on the host** - required. It must be a local
+  path; the installer creates it when needed and checks that it is writable.
+- **Series destination folder on the host** - required, same rules.
+- **Optional extra destination folder** - blank to skip. If set, it becomes
+  another destination profile in the dashboard.
+- **Default source folder for Auto mode** - Auto mode requires a folder here.
+  Review always opens at the drive root; this setting does not change Review.
+- **Auto mode** - No by default. If enabled, that source folder is copied into
+  the configured auto destination (Movies by default) when a drive appears.
+- **Dashboard port** - 8088 by default. The installer checks that the port is
+  free inside the new container and falls back to the first free port from
+  8088 to 8188 if it is taken.
+- **Admin password** - blank generates a random password. The password is
+  printed once, immediately after you confirm the summary and before the
+  container is created. Save it before continuing.
+- **Confirmation summary** - after the menu, every setting and planned change
+  is shown one last time. Answer no to stop without changing anything.
 
 After confirmation, the installer creates the container, installs the app,
 configures udev, systemd, and bind mounts, checks permissions, calls

@@ -224,7 +224,16 @@ No endpoints to change config, delete data, retry failures, mount/unmount, or ru
 
 Run on the Proxmox host as root. Supports `--repo-url`, `--ref`, `--dry-run`, `--yes` (defaults), `--uninstall`, `--help`. Prompts read `/dev/tty` so `curl … | bash` works.
 
-Prompt list (defaults in brackets):
+Interactive installs show a defaults table first (numbered 1-14: CT ID,
+hostname, storage, disk/RAM/cores/swap, network, Movies/Series destinations,
+extra destination, Auto-mode source folder, dashboard port, admin password).
+Enter accepts all defaults; a number opens that one setting, the table is
+redrawn after each change, and an invalid answer (unknown storage, in-use CT
+ID, bad IP) is reported and re-asked instead of aborting. The install cannot
+start while Movies or Series destinations are unset. Scripted installs
+(`--yes` or `USBC_ANSWERS`) skip the menu and use the sequential prompt
+order, which is the answer-stream contract:
+
 1. CT ID [next free]
 2. Hostname [usbcopy]
 3. Storage for CT disk [`local-lvm` or first with `images`]
