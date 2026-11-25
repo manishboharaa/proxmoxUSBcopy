@@ -99,9 +99,10 @@ bootstrap_from_pipe() {
         printf 'install.sh: error: repository URL must not embed credentials (user:token@host)\n' >&2
         exit 1
     fi
-    case "$repo_url" in
-        */OWNER/* | */OWNER | */OWNER.git)
-            printf 'install.sh: error: repository URL still contains the OWNER placeholder; pass --repo-url\n' >&2
+    repo_path=${rest#*/}
+    case "/$repo_path/" in
+        */OWNER/* | */owner/* | */'<owner>'/* | */OWNER.git/* | */owner.git/* | */'<owner>.git'/*)
+            printf 'install.sh: error: repository URL still contains the OWNER placeholder (OWNER, owner, or <owner>); pass --repo-url with the real repository URL\n' >&2
             exit 1
             ;;
     esac

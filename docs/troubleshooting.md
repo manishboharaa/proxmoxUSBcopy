@@ -68,13 +68,17 @@ the loaded database, spool, and mount paths, plus the log commands.
    Replug afterwards. The rule only matches USB block devices with a
    filesystem.
 
-5. For a drive that was connected while the host was off, run the boot-time
-   scan again:
+5. For a drive that was connected while the host was off, you can re-run the
+   boot-time scan:
 
    ```bash
    systemctl start usbcopy-scan-usb.service
    journalctl -u usbcopy-scan-usb -b --no-pager
    ```
+
+   The scan service starts mount units only for supported devices that are not
+   already mounted. It skips already-mounted drives; the app's startup scan
+   registers those under `/mnt/usb`.
 
 6. Check the event spool:
 
@@ -114,11 +118,16 @@ blkid /dev/<device>
 journalctl -u 'usbcopy-mount@<device>.service' -b --no-pager
 ```
 
-For exFAT or NTFS, install the host helpers if they are missing:
+For exFAT or NTFS, install the host helpers if they are missing. The
+installer only installs packages inside the CT; host filesystem helpers are
+manual prerequisites.
 
 ```bash
 apt-get update
-apt-get install -y exfatprogs ntfs-3g
+apt-get install -y ntfs-3g
+# exFAT normally uses the host kernel driver. If mount -t exfat reports a
+# missing helper or missing tools, also install:
+# apt-get install -y exfatprogs
 ```
 
 Test a read-only mount by hand. This does not write to the drive:
@@ -136,14 +145,39 @@ fails, the filesystem may be damaged or need a repair tool. This project never
 repairs or formats a drive. Back up the data elsewhere before reformatting;
 reformatting erases the drive.
 
+## Destination filesystem
+
+Destination folders must support hard links, chmod, and utime. Use ext4, XFS,
+Btrfs, or ZFS. FAT and exFAT destinations are not supported: the atomic
+no-clobber publish and timestamp/permission handling need features those
+filesystems do not provide.
+
+Check the filesystem that holds each destination:
+
+```bash
+findmnt -no TARGET,FSTYPE -T /path/to/Movies
+findmnt -no TARGET,FSTYPE -T /path/to/Series
+```
+
+If a copy fails while publishing a file, or reports an operation-not-permitted
+or hard-link error, move the destination to a supported filesystem and grant
+the mapped `usbcopy` UID access to the destination root.
+
 ## Permission warnings
 
-The app runs as the `usbcopy` user inside an unprivileged container. That user
-maps to a host UID and GID of `100000 + container ID`. The installer prints the
-mapped UID:GID and gives the destination roots and event spool to that
-UID:GID. It never changes the source drive. If you no longer have the install
-output, read the container IDs with `pct exec <ct-id> -- id usbcopy` and add
-100000.
+The app runs as the `usbcopy` user inside an unprivileged container. The host
+UID and GID are `100000 + the UID/GID of usbcopy inside the CT`; the CT ID is
+not part of this calculation. For example, if `id -u usbcopy` returns `999`,
+the host UID is `100999`. The installer prints the mapped UID:GID and gives the
+destination roots and event spool to that UID:GID. It never changes the source
+drive.
+
+If you no longer have the install output, read the IDs inside the CT:
+
+```bash
+pct exec <ct-id> -- id usbcopy
+pct exec <ct-id> -- sh -c 'echo $((100000 + $(id -u usbcopy))):$((100000 + $(id -g usbcopy)))'
+```
 
 Check the container side:
 
@@ -191,20 +225,24 @@ error. It means the source read test was skipped because no drive was connected.
 
 The installer checks the port inside the new container, not on the host, because
 the container has its own network namespace. If the requested port is busy, it
-tries the next free port from 8088 to 8188. Use the URL printed at the end of
-the install; the pre-install summary can still show the requested port.
+falls back to the first free port from 8088 to 8188. Use the URL printed at the
+end of the install; the pre-install summary can still show the requested port.
 
 To change the port after installation, edit the config inside the CT:
 
 ```bash
-pct exec <ct-id> -- vi /etc/usbcopy/config.toml
+pct exec <ct-id> -- sed -i 's/^port = .*/port = 9090/' /etc/usbcopy/config.toml
+pct exec <ct-id> -- chown root:usbcopy /etc/usbcopy/config.toml
+pct exec <ct-id> -- chmod 0640 /etc/usbcopy/config.toml
 pct exec <ct-id> -- systemctl restart usbcopy
 pct exec <ct-id> -- systemctl status usbcopy --no-pager
 ```
 
-Change `port` under `[server]`, then update bookmarks, any reverse proxy, and
-any firewall rule you added yourself. Check that the port is free inside the
-container:
+The command sets `port` under `[server]` to `9090`; choose a free port. The
+`chown` and `chmod` keep the file readable by the app after `sed` recreates it.
+If you prefer an editor, install one in the CT and edit the same file. Update
+bookmarks, any reverse proxy, and any firewall rule you added yourself. Check
+that the port is free inside the container:
 
 ```bash
 pct exec <ct-id> -- ss -ltnp
@@ -229,7 +267,7 @@ app has no retry button; a new run is the supported way to try again.
 - **Failed** means the file could not be copied. Open the run detail in the
   dashboard to see the error. Common causes are a full destination, destination
   permissions, a source read error, or the drive being unplugged. The preflight
-  requires selected size times 1.02 plus 256 MB free. Check space with:
+  requires selected size times 1.02 plus 256 MiB free. Check space with:
 
   ```bash
   df -h /path/to/Movies /path/to/Series
@@ -246,7 +284,8 @@ not rename it to a final name; check the run history and start a new import.
 
 ## App service health
 
-Check the HTTP health endpoint from the host:
+Check the HTTP health endpoint (`/healthz`) from the host. To check the app
+service inside the CT, run `pct exec <ct-id> -- systemctl status usbcopy`:
 
 ```bash
 curl -fsS http://<ct-ip>:<port>/healthz
@@ -276,7 +315,7 @@ pct exec <ct-id> -- systemctl is-active usbcopy
 ```
 
 If it still fails, read the first error in `journalctl -u usbcopy`. Config
-errors name the file and section.
+errors name the file and the invalid field or section.
 
 ## Pending spool events and rollback
 
@@ -291,8 +330,9 @@ ls -la /srv/usbcopy/events
 ls -la /srv/usbcopy/events/bad 2>/dev/null
 ```
 
-Restart the app to process pending files, or run the host scan to recreate
-notifications for drives that are already mounted:
+Restart the app to process pending files. To start mount units for supported
+devices that are not already mounted, run the host scan; it skips
+already-mounted drives, which the app's startup scan handles:
 
 ```bash
 pct exec <ct-id> -- systemctl restart usbcopy
@@ -304,9 +344,13 @@ The uninstaller warns and keeps pending event files instead of deleting them.
 If an install fails, the installer asks `Roll back the partial install? [Y/n]`.
 Yes (the default, and automatic with `--yes`) removes the CT created by that
 run, the host files and units it added, and restores backups. Destination data
-and pending spool events are kept. If you decline, the installer prints what it
-left in place; the manifest may remain, and a later install will refuse to run
-until you uninstall or repair it.
+and pending spool events are kept.
+
+If you decline, the installer prints what it left in place. The install
+manifest is written only at the final write-manifest stage. A failure before
+that stage leaves no manifest and no supported uninstall record; accept the
+rollback or clean up the printed CT and host changes manually. A later install
+is blocked only when a manifest already exists.
 
 ## Uninstall and reinstall
 

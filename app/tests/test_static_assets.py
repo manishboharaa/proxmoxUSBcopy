@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MOCK = REPO_ROOT / "docs" / "mock" / "dashboard.html"
@@ -58,9 +58,23 @@ REQUIRED_README_SECTIONS = (
 )
 
 
+def _markdown_lines(text: str):
+    in_fence = False
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            yield line
+
+
+def _markdown_prose(text: str) -> str:
+    return " ".join(" ".join(_markdown_lines(text)).split()).lower()
+
+
 def _readme_headings(text: str) -> set[str]:
     headings = set()
-    for line in text.splitlines():
+    for line in _markdown_lines(text):
         stripped = line.strip()
         if not stripped.startswith("#"):
             continue
@@ -91,29 +105,75 @@ def test_readme_documents_real_installer_flags():
 
 
 def test_readme_says_default_uninstall_keeps_ct_and_destinations():
-    text = README.read_text().lower()
+    text = _markdown_prose(README.read_text())
     assert "keeps the ct" in text
     assert "destination files" in text
 
 
 def test_readme_states_source_and_copy_safety():
-    text = README.read_text().lower()
+    text = _markdown_prose(README.read_text())
     for phrase in (
         "read-only",
         "copy-only",
         "never writes, moves, or deletes",
         "never overwritten",
         "atomic",
-        "permanent",
+        "persistent history",
+        "persists while the app is installed",
+        "preview-only",
+        "attempted file",
     ):
         assert phrase in text
+    assert "permanent" not in text
+
+
+def test_readme_has_no_placeholder_install_commands():
+    text = README.read_text().lower()
+    assert "<owner>" not in text
+    assert "git clone" not in text
+    assert "raw.githubusercontent.com" not in text
+    assert "curl -fssl" not in text
+
+
+def test_readme_documents_exact_noninteractive_answer_stream():
+    text = README.read_text()
+    prose = _markdown_prose(text)
+    assert (
+        "CTID hostname storage disk-GB RAM-MB cores network movies series "
+        "extra source auto port [password]"
+    ) in text
+    assert "13 required tokens" in prose
+    assert "optional 14th password token" in prose
+    assert "swap is forced to 512 mb" in prose
+    assert "static networking" in prose
+    assert "three more tokens" in prose
+    assert "movies and series are required" in prose
+    assert "`--yes` alone fails" in prose
+
+
+def test_readme_review_opens_at_drive_root():
+    prose = _markdown_prose(README.read_text())
+    assert "review always opens at the drive root" in prose
+    assert "browse from the drive root" in prose
+    assert "start at the configured source folder" not in prose
+
+
+def test_readme_documents_template_and_destination_requirements():
+    prose = _markdown_prose(README.read_text())
+    assert "vztmpl" in prose
+    assert "hard links" in prose
+    assert "fat and exfat destinations are not supported" in prose
+    assert "256 mib" in prose
+    assert "256 mb" not in prose
 
 
 def test_troubleshooting_doc_covers_common_failures():
-    text = TROUBLESHOOTING.read_text().lower()
+    text = _markdown_prose(TROUBLESHOOTING.read_text())
     for phrase in (
         "drive not detected",
         "unsupported filesystem",
+        "destination filesystem",
+        "hard links",
         "permission",
         "port",
         "conflict",
@@ -123,6 +183,31 @@ def test_troubleshooting_doc_covers_common_failures():
         "rollback",
     ):
         assert phrase in text
+    assert "100000 + ct id" not in text
+    assert "100000 + container id" not in text
+
+
+def test_troubleshooting_uses_usbcopy_uid_for_mapped_owner():
+    text = _markdown_prose(TROUBLESHOOTING.read_text())
+    assert "100000 + the uid/gid of usbcopy inside the ct" in text
+    assert "id -u usbcopy" in text
+    assert "100000 + ct id" not in text
+    assert "100000 + container id" not in text
+
+
+def test_troubleshooting_corrects_port_scan_and_rollback_wording():
+    full_text = TROUBLESHOOTING.read_text().lower()
+    text = _markdown_prose(TROUBLESHOOTING.read_text())
+    assert "sed -i" in full_text
+    assert "vi /etc/usbcopy" not in full_text
+    assert "skips already-mounted drives" in text
+    assert "startup scan" in text
+    assert "recreate notifications for drives that are already mounted" not in text
+    assert "write-manifest stage" in text
+    assert "no supported uninstall record" in text
+    assert "later install is blocked only when a manifest already exists" in text
+    assert "manifest may remain" not in text
+    assert "later install will refuse" not in text
 
 
 def test_ci_workflow_runs_python_and_shell_checks():
@@ -138,6 +223,5 @@ def test_ci_workflow_runs_python_and_shell_checks():
 
 
 def test_ci_workflow_is_valid_yaml():
-    yaml = pytest.importorskip("yaml")
     data = yaml.safe_load(CI_WORKFLOW.read_text())
     assert set(data["jobs"]) == {"python", "shell"}

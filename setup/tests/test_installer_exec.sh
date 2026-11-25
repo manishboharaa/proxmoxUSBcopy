@@ -137,7 +137,7 @@ reset_fixtures() {
     USBC_HOST_MOUNTS=()
     USBC_RO_FALLBACK_MOUNTS=()
     USBC_INSTALLER_MODE=checkout
-    REPO_URL='https://example.test/owner/proxmoxUSBcopy'
+    REPO_URL='https://example.test/example-org/proxmoxUSBcopy'
     REPO_REF='main'
     unset USBC_FAKE_USER_ABSENT USBC_FAKE_PRESENT_PACKAGES
     unset USBC_FAKE_SOURCE_UNREADABLE USBC_FAKE_CT_MISSING_MOUNT
@@ -310,11 +310,11 @@ assert_contains 'once-secret' "$out" 'password announcement'
 pass "the generated password is announced in a clear save-now block"
 
 USBC_INSTALLER_MODE=bootstrap
-REPO_URL='https://example.test/owner/proxmoxUSBcopy'
+REPO_URL='https://example.test/example-org/proxmoxUSBcopy'
 REPO_REF='main'
 out=$(installer_uninstall_hint)
 assert_contains '--uninstall' "$out" 'uninstall hint'
-assert_contains 'https://example.test/owner/proxmoxUSBcopy@main' "$out" 'uninstall hint'
+assert_contains 'https://example.test/example-org/proxmoxUSBcopy@main' "$out" 'uninstall hint'
 assert_not_contains '/tmp' "$out" 'uninstall hint'
 USBC_INSTALLER_MODE=checkout
 pass "the bootstrap uninstall hint is stable and not a temp checkout path"
@@ -561,7 +561,7 @@ chmod +x "$BOOT_SRC/setup/install.sh"
 : >"$USBC_FAKE_LOG"
 out=$(USBC_FAKE_CURL_ARCHIVE="$WORK/repo.tar.gz" BOOT_ARGS_FILE="$WORK/boot-args" \
     BOOT_MODE_FILE="$WORK/boot-mode" \
-    bash -s -- --dry-run --yes --repo-url https://example.test/owner/proxmoxUSBcopy --ref main \
+    bash -s -- --dry-run --yes --repo-url https://example.test/example-org/proxmoxUSBcopy --ref main \
     <"$INSTALL" 2>&1)
 assert_contains 'bootstrap checkout ran' "$out" 'bootstrap output'
 args=$(<"$WORK/boot-args")
@@ -570,10 +570,10 @@ assert_contains '--dry-run' "$args" 'bootstrap args'
 assert_contains '--yes' "$args" 'bootstrap args'
 assert_contains '--repo-url' "$args" 'bootstrap args'
 assert_contains '--ref' "$args" 'bootstrap args'
-assert_contains 'https://example.test/owner/proxmoxUSBcopy/archive/main.tar.gz' "$(<"$USBC_FAKE_LOG")" 'fake log'
+assert_contains 'https://example.test/example-org/proxmoxUSBcopy/archive/main.tar.gz' "$(<"$USBC_FAKE_LOG")" 'fake log'
 pass "piped install downloads the archive and re-execs the checkout with the original args"
 
-out=$(bash -s -- --repo-url https://user:token123@example.test/owner/repo.git <"$INSTALL" 2>&1) \
+out=$(bash -s -- --repo-url https://user:token123@example.test/example-org/repo.git <"$INSTALL" 2>&1) \
     && status=0 || status=$?
 ((status != 0)) || fail "credential-bearing bootstrap URL was accepted"
 assert_contains 'must not embed credentials' "$out" 'bootstrap failure'
@@ -583,9 +583,18 @@ pass "piped install rejects credentials without echoing them"
 out=$(bash <"$INSTALL" 2>&1) && status=0 || status=$?
 ((status != 0)) || fail "OWNER placeholder bootstrap URL was accepted"
 assert_contains 'OWNER placeholder' "$out" 'bootstrap failure'
-pass "piped install rejects the OWNER placeholder"
+pass "piped install rejects the default OWNER placeholder"
 
-out=$(USBC_FAKE_CURL_FAIL=1 bash -s -- --repo-url https://example.test/owner/proxmoxUSBcopy \
+for placeholder in '<owner>' OWNER owner; do
+    out=$(bash -s -- --repo-url "https://example.test/$placeholder/proxmoxUSBcopy" \
+        <"$INSTALL" 2>&1) && status=0 || status=$?
+    ((status != 0)) || fail "bootstrap URL with $placeholder placeholder was accepted"
+    assert_contains 'OWNER placeholder' "$out" 'bootstrap failure'
+    assert_contains 'pass --repo-url' "$out" 'bootstrap failure'
+done
+pass "piped install rejects <owner>, OWNER, and owner placeholders"
+
+out=$(USBC_FAKE_CURL_FAIL=1 bash -s -- --repo-url https://example.test/example-org/proxmoxUSBcopy \
     <"$INSTALL" 2>&1) && status=0 || status=$?
 ((status != 0)) || fail "bootstrap without a downloadable archive unexpectedly succeeded"
 assert_contains 'could not download the repository archive' "$out" 'bootstrap failure'
