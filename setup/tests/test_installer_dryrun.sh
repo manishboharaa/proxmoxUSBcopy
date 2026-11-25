@@ -78,6 +78,13 @@ assert_contains 'PLAN: create Python venv at /opt/usbcopy/venv in CT 101' "$out"
 assert_contains 'PLAN: copy application files to /opt/usbcopy in CT 101' "$out"
 assert_contains 'PLAN: create host directory /srv/usb-ingest' "$out"
 assert_contains 'PLAN: create host directory /srv/usbcopy/events' "$out"
+
+printf '\n== Proxmox VE 9 host ==\n'
+out=$(USBC_FAKE_PVE_VERSION='pve-manager/9.1.6/71482d1833ded40a (running kernel: 6.17.13-2-pve)' \
+    USBC_ANSWERS="$ANSWERS" "$INSTALL" --dry-run --yes 2>&1)
+assert_contains 'PLAN: create CT 101' "$out"
+assert_contains 'PLAN: dashboard http://' "$out"
+pass "preflight accepts a Proxmox VE 9 host"
 assert_contains 'PLAN: mount /srv/usb-ingest -> /mnt/usb (read-only)' "$out"
 assert_contains 'PLAN: mount /srv/usbcopy/events -> /var/lib/usbcopy/events' "$out"
 assert_contains 'PLAN: install udev rule /etc/udev/rules.d/99-usbcopy.rules' "$out"

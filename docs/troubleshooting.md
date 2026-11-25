@@ -381,7 +381,7 @@ confirmation.
 
 ## Manual Proxmox smoke checklist
 
-These checks need a real Proxmox VE 8 host and a throwaway USB drive. They are
+These checks need a real Proxmox VE 8 or 9 host and a throwaway USB drive. They are
 not automated in this repository; run them before relying on a new release.
 
 1. **Fresh install:** on a host with an LXC template storage, run the installer

@@ -44,7 +44,7 @@ selected folder's own name is not repeated, so you get
 
 ## Requirements
 
-- Proxmox VE 8.x on the host, with root access.
+- Proxmox VE 8 or higher on the host, with root access (tested on 8.2 and 9.1).
 - One Debian 12 LXC container. The installer creates it as an unprivileged
   container; you do not need to prepare one first.
 - An LXC-template-capable storage on the host (content type `vztmpl`, usually

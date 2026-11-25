@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Fake pveversion for installer tests.
+# Fake pveversion for installer tests. Set USBC_FAKE_PVE_VERSION to
+# impersonate a different Proxmox VE release.
 set -euo pipefail
 
 if [[ -n ${USBC_FAKE_LOG:-} ]]; then
     printf 'pveversion %s\n' "$*" >>"$USBC_FAKE_LOG"
 fi
-printf 'pve-manager/8.2.4/6b7f3b4d9f4e1c2a (running kernel: 6.8.4-2-pve)\n'
+version_line='pve-manager/8.2.4/6b7f3b4d9f4e1c2a (running kernel: 6.8.4-2-pve)'
+if [[ -n ${USBC_FAKE_PVE_VERSION:-} ]]; then
+    version_line=$USBC_FAKE_PVE_VERSION
+fi
+printf '%s\n' "$version_line"
