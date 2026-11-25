@@ -175,21 +175,25 @@ next_free_ct_id() {
     done
 }
 
-preflight_destination() {
+check_destination_ready() {
     local name=$1
     local path=$2
     local exists_var=$3
     local available=''
     local parent=''
 
-    validate_destination_safety "$name" "$path" >/dev/null
+    check_destination "$name" "$path" >/dev/null || return 1
     if [[ -e $path ]]; then
-        [[ -d $path ]] || die "$name is not a directory: $path"
+        if [[ ! -d $path ]]; then
+            USBC_VALIDATE_ERROR="$name is not a directory: $path"
+            return 1
+        fi
         if [[ ! -w $path ]]; then
             if ((DRY_RUN == 1)); then
                 warn "$name is not writable by this user; a real root install will verify: $path"
             else
-                die "$name is not writable: $path"
+                USBC_VALIDATE_ERROR="$name is not writable: $path"
+                return 1
             fi
         fi
         available=$(df -Pk -- "$path" 2>/dev/null | awk 'NR == 2 { print $4 }') || true
@@ -202,39 +206,58 @@ preflight_destination() {
     else
         parent=${path%/*}
         [[ -n $parent ]] || parent=/
-        [[ -d $parent ]] \
-            || die "$name parent directory does not exist: $parent"
+        if [[ ! -d $parent ]]; then
+            USBC_VALIDATE_ERROR="$name parent directory does not exist: $parent"
+            return 1
+        fi
         if [[ ! -w $parent ]]; then
             if ((DRY_RUN == 1)); then
                 warn "$name parent is not writable by this user; a real root install will verify: $parent"
             else
-                die "$name parent directory is not writable: $parent"
+                USBC_VALIDATE_ERROR="$name parent directory is not writable: $parent"
+                return 1
             fi
         fi
         log "$name will be created during install: $path"
         printf -v "$exists_var" '%s' 0
     fi
+    return 0
 }
 
-preflight_destinations() {
-    [[ $DEST_MOVIES != "$DEST_SERIES" ]] \
-        || die "Movies and Series destinations must be different folders"
+preflight_destination() {
+    check_destination_ready "$@" || die "$USBC_VALIDATE_ERROR"
+}
+
+check_destinations() {
+    USBC_VALIDATE_ERROR=''
+    if [[ $DEST_MOVIES == "$DEST_SERIES" ]]; then
+        USBC_VALIDATE_ERROR="Movies and Series destinations must be different folders"
+        return 1
+    fi
     if [[ -n $DEST_EXTRA ]]; then
-        [[ $DEST_EXTRA != "$DEST_MOVIES" && $DEST_EXTRA != "$DEST_SERIES" ]] \
-            || die "extra destination must differ from Movies and Series"
+        if [[ $DEST_EXTRA == "$DEST_MOVIES" || $DEST_EXTRA == "$DEST_SERIES" ]]; then
+            USBC_VALIDATE_ERROR="extra destination must differ from Movies and Series"
+            return 1
+        fi
         case "${DEST_EXTRA##*/}" in
             [Mm][Oo][Vv][Ii][Ee][Ss] | [Ss][Ee][Rr][Ii][Ee][Ss])
-                die "extra destination must not use the reserved Movies or Series name"
+                USBC_VALIDATE_ERROR="extra destination must not use the reserved Movies or Series name"
+                return 1
                 ;;
         esac
     fi
     if [[ $AUTO_MODE == yes && -z $SOURCE_FOLDER ]]; then
-        die "Auto mode requires a default source folder"
+        USBC_VALIDATE_ERROR="Auto mode requires a default source folder"
+        return 1
     fi
-
-    preflight_destination "Movies destination" "$DEST_MOVIES" DEST_MOVIES_EXISTS
-    preflight_destination "Series destination" "$DEST_SERIES" DEST_SERIES_EXISTS
+    check_destination_ready "Movies destination" "$DEST_MOVIES" DEST_MOVIES_EXISTS || return 1
+    check_destination_ready "Series destination" "$DEST_SERIES" DEST_SERIES_EXISTS || return 1
     if [[ -n $DEST_EXTRA ]]; then
-        preflight_destination "extra destination" "$DEST_EXTRA" DEST_EXTRA_EXISTS
+        check_destination_ready "extra destination" "$DEST_EXTRA" DEST_EXTRA_EXISTS || return 1
     fi
+    return 0
+}
+
+preflight_destinations() {
+    check_destinations || die "$USBC_VALIDATE_ERROR"
 }

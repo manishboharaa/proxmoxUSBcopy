@@ -366,6 +366,7 @@ edit_destination() {
     local varname=$2
     local value=''
     local canonical=''
+    local parent=''
 
     while :; do
         ask "$varname" "$label destination folder on host (required)" ""
@@ -374,11 +375,24 @@ edit_destination() {
             warn "$label destination is required"
             continue
         fi
-        if canonical=$(check_destination "$label destination" "$value"); then
-            printf -v "$varname" '%s' "$canonical"
-            return 0
+        if ! canonical=$(check_destination "$label destination" "$value"); then
+            warn "${USBC_VALIDATE_ERROR}; try again"
+            continue
         fi
-        warn "${USBC_VALIDATE_ERROR}; try again"
+        if [[ -e $canonical && ! -d $canonical ]]; then
+            warn "$label destination is not a directory: $canonical; try again"
+            continue
+        fi
+        if [[ ! -e $canonical ]]; then
+            parent=${canonical%/*}
+            [[ -n $parent ]] || parent=/
+            if [[ ! -d $parent ]]; then
+                warn "$label destination parent directory does not exist: $parent (create it first or pick another folder); try again"
+                continue
+            fi
+        fi
+        printf -v "$varname" '%s' "$canonical"
+        return 0
     done
 }
 
@@ -397,6 +411,18 @@ edit_extra_destination() {
         if ! canonical=$(check_destination "extra destination" "$DEST_EXTRA"); then
             warn "${USBC_VALIDATE_ERROR}; try again"
             continue
+        fi
+        if [[ -e $canonical && ! -d $canonical ]]; then
+            warn "extra destination is not a directory: $canonical; try again"
+            continue
+        fi
+        if [[ ! -e $canonical ]]; then
+            parent=${canonical%/*}
+            [[ -n $parent ]] || parent=/
+            if [[ ! -d $parent ]]; then
+                warn "extra destination parent directory does not exist: $parent (create it first or pick another folder); try again"
+                continue
+            fi
         fi
         base=${canonical##*/}
         if [[ ! $base =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
@@ -430,7 +456,7 @@ edit_source_folder() {
         case "${answer,,}" in
             y | yes | true | 1)
                 AUTO_MODE=yes
-                return 0
+                break
                 ;;
             '' | n | no | false | 0)
                 AUTO_MODE=no
@@ -441,6 +467,16 @@ edit_source_folder() {
                 ;;
         esac
     done
+    if [[ -z $SOURCE_FOLDER ]]; then
+        warn "Auto mode requires a default source folder"
+        while :; do
+            ask SOURCE_FOLDER "Default source folder for Auto mode (required for Auto mode)" ""
+            if [[ -n $SOURCE_FOLDER ]] && check_source_folder "$SOURCE_FOLDER"; then
+                break
+            fi
+            warn "Auto mode requires a default source folder; try again"
+        done
+    fi
 }
 
 edit_port() {
@@ -494,30 +530,51 @@ menu_defaults() {
 print_settings_table() {
     local network
     network=$(network_summary)
-    local password_display='auto-generate'
+    local password_display="${USBC_C_DIM}auto-generate${USBC_C_RESET}"
     if [[ -n $ADMIN_PASSWORD ]]; then
-        password_display='(set)'
+        password_display="${USBC_C_GOOD}(set)${USBC_C_RESET}"
     fi
-    local movies_display=${DEST_MOVIES:-'(not set - required)'}
-    local series_display=${DEST_SERIES:-'(not set - required)'}
-    local extra_display=${DEST_EXTRA:-none}
-    local source_display=${SOURCE_FOLDER:-whole drive}
+    local movies_display="${USBC_C_BAD}(not set - required)${USBC_C_RESET}"
+    if [[ -n $DEST_MOVIES ]]; then
+        movies_display="${USBC_C_GOOD}${DEST_MOVIES}${USBC_C_RESET}"
+    fi
+    local series_display="${USBC_C_BAD}(not set - required)${USBC_C_RESET}"
+    if [[ -n $DEST_SERIES ]]; then
+        series_display="${USBC_C_GOOD}${DEST_SERIES}${USBC_C_RESET}"
+    fi
+    local extra_display="${USBC_C_DIM}none${USBC_C_RESET}"
+    if [[ -n $DEST_EXTRA ]]; then
+        extra_display="${USBC_C_GOOD}${DEST_EXTRA}${USBC_C_RESET}"
+    fi
+    local source_display="${USBC_C_DIM}whole drive${USBC_C_RESET}"
+    if [[ -n $SOURCE_FOLDER ]]; then
+        source_display="${USBC_C_GOOD}${SOURCE_FOLDER}${USBC_C_RESET}"
+    fi
+    if [[ $AUTO_MODE == yes ]]; then
+        source_display+=" ${USBC_C_GOOD}(Auto mode on)${USBC_C_RESET}"
+    fi
 
-    cat <<EOF
-
-install.sh: ready to install. These settings will be used:
-
-  1. CT ID ............. $CT_ID                  8. Network ............. $network (bridge $CT_BRIDGE)
-  2. Hostname .......... $CT_HOSTNAME             9. Movies destination .. $movies_display
-  3. Storage ........... $CT_STORAGE             10. Series destination . $series_display
-  4. Disk size ......... ${DISK_GB} GB                11. Extra destination .. $extra_display
-  5. RAM ............... ${RAM_MB} MB              12. Auto-mode source ... $source_display
-  6. CPU cores ......... $CORES                  13. Dashboard port ..... $PORT
-  7. Swap .............. ${SWAP_MB} MB              14. Admin password ..... $password_display
-
-Press Enter to install with these settings, or type a number to change it.
-You can change as many as you like, one at a time.
-EOF
+    printf '\n'
+    log "ready to install. These settings will be used:"
+    printf '%s\n' "${USBC_C_DIM}  ----------------------------------------------------------------${USBC_C_RESET}"
+    printf '  %2d. %-21s %s\n' 1 'CT ID' "${USBC_C_GOOD}${CT_ID}${USBC_C_RESET}"
+    printf '  %2d. %-21s %s\n' 2 'Hostname' "${USBC_C_GOOD}${CT_HOSTNAME}${USBC_C_RESET}"
+    printf '  %2d. %-21s %s\n' 3 'Storage' "${USBC_C_GOOD}${CT_STORAGE}${USBC_C_RESET}"
+    printf '  %2d. %-21s %s\n' 4 'Disk size' "${USBC_C_GOOD}${DISK_GB} GB${USBC_C_RESET}"
+    printf '  %2d. %-21s %s\n' 5 'RAM' "${USBC_C_GOOD}${RAM_MB} MB${USBC_C_RESET}"
+    printf '  %2d. %-21s %s\n' 6 'CPU cores' "${USBC_C_GOOD}${CORES}${USBC_C_RESET}"
+    printf '  %2d. %-21s %s\n' 7 'Swap' "${USBC_C_GOOD}${SWAP_MB} MB${USBC_C_RESET}"
+    printf '  %2d. %-21s %s\n' 8 'Network' "${USBC_C_GOOD}${network}${USBC_C_RESET} (bridge ${CT_BRIDGE})"
+    printf '  %2d. %-21s %s\n' 9 'Movies destination' "$movies_display"
+    printf '  %2d. %-21s %s\n' 10 'Series destination' "$series_display"
+    printf '  %2d. %-21s %s\n' 11 'Extra destination' "$extra_display"
+    printf '  %2d. %-21s %s\n' 12 'Auto-mode source' "$source_display"
+    printf '  %2d. %-21s %s\n' 13 'Dashboard port' "${USBC_C_GOOD}${PORT}${USBC_C_RESET}"
+    printf '  %2d. %-21s %s\n' 14 'Admin password' "$password_display"
+    printf '%s\n' "${USBC_C_DIM}  ----------------------------------------------------------------${USBC_C_RESET}"
+    printf '\n'
+    printf 'Press %s to install with these settings, or type a number to change it.\n' "${USBC_C_GOOD}Enter${USBC_C_RESET}"
+    printf 'You can change as many as you like, one at a time.\n\n'
 }
 
 show_settings_menu() {
@@ -525,7 +582,7 @@ show_settings_menu() {
 
     while :; do
         print_settings_table
-        if ! line=$(read_tty "Change a setting (1-14) or press Enter to install: "); then
+        if ! line=$(read_tty "${USBC_C_HEAD}Change a setting (1-14) or press Enter to install${USBC_C_RESET}: "); then
             die "could not read from the terminal"
         fi
         case "$line" in

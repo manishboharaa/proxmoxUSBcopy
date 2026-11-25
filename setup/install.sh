@@ -447,12 +447,19 @@ main() {
 
     if noninteractive; then
         collect_answers "$(default_image_storage)" "$(next_free_ct_id)"
+        validate_admin_password "$ADMIN_PASSWORD"
+        preflight_destinations
     else
         menu_defaults "$(default_image_storage)" "$(next_free_ct_id)"
-        show_settings_menu
+        while :; do
+            show_settings_menu
+            if check_destinations; then
+                break
+            fi
+            warn "${USBC_VALIDATE_ERROR}; fix it in the menu (items 9, 10, 11 or 12) and press Enter again"
+        done
+        validate_admin_password "$ADMIN_PASSWORD"
     fi
-    validate_admin_password "$ADMIN_PASSWORD"
-    preflight_destinations
     print_plan
     confirm_summary
 

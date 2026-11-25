@@ -100,18 +100,31 @@ questions:
 
 ```
 install.sh: ready to install. These settings will be used:
-
-  1. CT ID ............. 101                8. Network ............. DHCP (bridge vmbr0)
-  2. Hostname .......... usbcopy             9. Movies destination .. (not set - required)
-  3. Storage ........... data               10. Series destination . (not set - required)
-  4. Disk size ......... 8 GB               11. Extra destination .. none
-  5. RAM ............... 1024 MB            12. Auto-mode source ... whole drive
-  6. CPU cores ......... 2                  13. Dashboard port ..... 8088
-  7. Swap .............. 512 MB             14. Admin password ..... auto-generate
+  ----------------------------------------------------------------
+   1. CT ID                  101
+   2. Hostname               usbcopy
+   3. Storage                data
+   4. Disk size              8 GB
+   5. RAM                    1024 MB
+   6. CPU cores              2
+   7. Swap                   512 MB
+   8. Network                DHCP (bridge vmbr0)
+   9. Movies destination     /data/movies
+  10. Series destination     (not set - required)
+  11. Extra destination      none
+  12. Auto-mode source       whole drive
+  13. Dashboard port         8088
+  14. Admin password         auto-generate
+  ----------------------------------------------------------------
 
 Press Enter to install with these settings, or type a number to change it.
 You can change as many as you like, one at a time.
 ```
+
+Press Enter to install with the defaults, or type a number and answer the
+follow-up for that one setting; the table is shown again after every change.
+In a terminal the values are coloured (green when set, red while a required
+destination is still unset).
 
 Press Enter to install with the defaults, or type a number and answer the
 follow-up for that one setting; the table is shown again after every change.

@@ -57,16 +57,35 @@ require_interactive_tty() {
     fi
 }
 
+# --- terminal accents -------------------------------------------------------
+# Colours only when the stream is a terminal: captured output (tests, logs,
+# pipes) stays plain, and NO_COLOR turns them off everywhere.
+if [[ -z ${NO_COLOR:-} && -t 1 ]]; then
+    USBC_C_RESET=$'\e[0m'
+    USBC_C_HEAD=$'\e[1;36m'
+    USBC_C_GOOD=$'\e[32m'
+    USBC_C_BAD=$'\e[31m'
+    USBC_C_DIM=$'\e[2m'
+else
+    USBC_C_RESET='' USBC_C_HEAD='' USBC_C_GOOD='' USBC_C_BAD='' USBC_C_DIM=''
+fi
+if [[ -z ${NO_COLOR:-} && -t 2 ]]; then
+    USBC_C_WARN=$'\e[33m'
+    USBC_C_ERR=$'\e[1;31m'
+else
+    USBC_C_WARN='' USBC_C_ERR=''
+fi
+
 log() {
-    printf '%s: %s\n' "$PROG" "$*"
+    printf '%s\n' "${USBC_C_HEAD}${PROG}:${USBC_C_RESET} $*"
 }
 
 warn() {
-    printf '%s: warning: %s\n' "$PROG" "$*" >&2
+    printf '%s\n' "${USBC_C_WARN}${PROG}: warning:${USBC_C_RESET} $*" >&2
 }
 
 die() {
-    printf '%s: error: %s\n' "$PROG" "$*" >&2
+    printf '%s\n' "${USBC_C_ERR}${PROG}: error:${USBC_C_RESET} $*" >&2
     # A die inside a command substitution runs in a subshell. Let that subshell
     # exit non-zero so the parent's ERR trap performs the single rollback.
     if [[ ${BASHPID:-$$} != "$$" ]]; then
