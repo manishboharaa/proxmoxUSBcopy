@@ -154,6 +154,9 @@ case "$command" in
             *'systemctl is-active'*)
                 exit 0
                 ;;
+            *'grep -E ^port'*)
+                printf 'port = %s\n' "${USBC_FAKE_CONFIG_PORT:-8089}"
+                ;;
             *'curl '*)
                 printf '{"status":"ok"}\n'
                 ;;

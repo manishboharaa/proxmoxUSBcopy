@@ -322,6 +322,16 @@ update_app() {
 
     tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/usbcopy-update.XXXXXX") \
         || die "could not create a temporary directory"
+
+    # --update never prompts, so PORT is not set by the answer flow; the real
+    # port lives in the CT config written at install time.
+    PORT=$(ct_exec grep -E '^port' "$APP_CT_CONFIG" | head -n 1 | tr -dc '0-9')
+    if [[ ! $PORT =~ ^[0-9]+$ ]]; then
+        warn "could not read the dashboard port from $APP_CT_CONFIG; assuming 8088"
+        PORT=8088
+    fi
+    log "update: dashboard port $PORT (read from the existing config)"
+
     tar -C "$USBC_APP_SOURCE" -czf "$tmp_dir/app.tar.gz" \
         usbcopy templates static requirements.txt config.example.toml \
         || die "could not archive $USBC_APP_SOURCE"

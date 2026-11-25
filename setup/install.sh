@@ -417,7 +417,7 @@ run_stage() {
 print_update_result() {
     log "update complete: host wiring and app files were refreshed"
     log "config.toml and the admin password in CT $CT_ID were kept"
-    log "dashboard http://<ct-ip>:$PORT (username admin)"
+    log "dashboard http://<ct-ip>:${PORT:-8088} (username admin)"
 }
 
 main() {
