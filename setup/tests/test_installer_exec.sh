@@ -4,7 +4,7 @@
 # Everything runs with fakes on PATH and every host path redirected into a
 # temp directory. No real CT is created, no host file outside the temp tree is
 # touched, and the suite never runs as root.
-# shellcheck disable=SC2034,SC2016,SC2317
+# shellcheck disable=SC2034,SC2016,SC2317,SC2329
 set -euo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)

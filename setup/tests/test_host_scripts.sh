@@ -4,7 +4,7 @@
 # CLI paths run with --dry-run. Real-mode branches are tested with function
 # stubs after sourcing the scripts, so no real mount or host path is touched.
 # Stub functions are invoked indirectly by the sourced scripts.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 set -euo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)

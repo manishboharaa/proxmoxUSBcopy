@@ -67,6 +67,8 @@ if [[ -z ${NO_COLOR:-} && -t 1 ]]; then
     USBC_C_BAD=$'\e[31m'
     USBC_C_DIM=$'\e[2m'
 else
+    # Colors are consumed through sourced copies of this block in the caller.
+    # shellcheck disable=SC2034
     USBC_C_RESET='' USBC_C_HEAD='' USBC_C_GOOD='' USBC_C_BAD='' USBC_C_DIM=''
 fi
 if [[ -z ${NO_COLOR:-} && -t 2 ]]; then

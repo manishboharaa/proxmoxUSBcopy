@@ -5,6 +5,7 @@
 # interactive menu loop can be driven from canned input. Noninteractive
 # behavior stays covered by test_installer_dryrun.sh and
 # test_installer_exec.sh; the answer stream must never change.
+# shellcheck disable=SC1091,SC2034,SC2329
 set -euo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -127,7 +128,7 @@ run_menu() {
     { show_settings_menu >/dev/null; } 2>"$WORK/err.log"
 }
 
-run_menu "9" ""$WORK/movies"" "10" ""$WORK/series"" ""
+run_menu "9" "$WORK/movies" "10" "$WORK/series" ""
 [[ $DEST_MOVIES == "$WORK/movies" ]] || fail "DEST_MOVIES not set: $DEST_MOVIES"
 [[ $DEST_SERIES == "$WORK/series" ]] || fail "DEST_SERIES not set: $DEST_SERIES"
 [[ $PORT == 8088 ]] || fail "PORT not defaulted: $PORT"
@@ -135,7 +136,7 @@ run_menu "9" ""$WORK/movies"" "10" ""$WORK/series"" ""
 ((${#ADMIN_PASSWORD} >= 16)) || fail "generated password too short"
 pass "menu accepts destinations and leaves the rest on defaults"
 
-run_menu "" "9" ""$WORK/movies"" "10" ""$WORK/series"" ""
+run_menu "" "9" "$WORK/movies" "10" "$WORK/series" ""
 err=$(cat "$WORK/err.log")
 assert_contains "required" "$err" "blocked-enter warning"
 assert_contains "9" "$err" "blocked-enter hint numbers"
@@ -143,31 +144,31 @@ assert_contains "10" "$err" "blocked-enter hint numbers"
 [[ $DEST_MOVIES == "$WORK/movies" ]] || fail "DEST_MOVIES not set after block"
 pass "enter with unset destinations is blocked and names the menu numbers"
 
-run_menu "3" "8" "data" "9" ""$WORK/movies"" "10" ""$WORK/series"" ""
+run_menu "3" "8" "data" "9" "$WORK/movies" "10" "$WORK/series" ""
 err=$(cat "$WORK/err.log")
 assert_contains "storage '8' does not support images" "$err" "storage typo warning"
 [[ $CT_STORAGE == data ]] || fail "CT_STORAGE not set after typo"
 pass "a wrong storage answer re-asks instead of dying"
 
-run_menu "3" "fake" "data" "9" ""$WORK/movies"" "10" ""$WORK/series"" ""
+run_menu "3" "fake" "data" "9" "$WORK/movies" "10" "$WORK/series" ""
 err=$(cat "$WORK/err.log")
 assert_contains "does not support images" "$err" "storage name warning"
 pass "an unknown storage name re-asks"
 
-run_menu "1" "101" "105" "9" ""$WORK/movies"" "10" ""$WORK/series"" ""
+run_menu "1" "101" "105" "9" "$WORK/movies" "10" "$WORK/series" ""
 err=$(cat "$WORK/err.log")
 assert_contains "already in use" "$err" "ct id warning"
 [[ $CT_ID == 105 ]] || fail "CT_ID not set after collision"
 pass "an in-use CT ID re-asks"
 
-run_menu "8" "static" "bad" "10.0.0.5/24" "10.0.0.1" "" "9" ""$WORK/movies"" "10" ""$WORK/series"" ""
+run_menu "8" "static" "bad" "10.0.0.5/24" "10.0.0.1" "" "9" "$WORK/movies" "10" "$WORK/series" ""
 err=$(cat "$WORK/err.log")
 assert_contains "invalid static IP" "$err" "static ip warning"
 [[ $NET_MODE == static && $NET_IP == 10.0.0.5/24 && $NET_GW == 10.0.0.1 ]] \
     || fail "static network not set: $NET_MODE $NET_IP $NET_GW"
 pass "a bad static IP re-asks inside the network editor"
 
-run_menu "abc" "9" ""$WORK/movies"" "10" ""$WORK/series"" ""
+run_menu "abc" "9" "$WORK/movies" "10" "$WORK/series" ""
 err=$(cat "$WORK/err.log")
 assert_contains "Enter a number" "$err" "junk menu input warning"
 [[ $DEST_MOVIES == "$WORK/movies" ]] || fail "menu did not recover after junk input"
