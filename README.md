@@ -70,10 +70,18 @@ selected folder's own name is not repeated, so you get
 
 ## Install
 
+### One command
+
+On a Proxmox host with internet access, run:
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/manishboharaa/proxmoxUSBcopy/main/setup/install.sh)"
+```
+
 ### From a checkout
 
-The project is not published yet, so there is no one-command URL. Run the
-installer from a checkout of this repository:
+If you prefer to inspect the code first, run the installer from a checkout
+of this repository:
 
 ```bash
 cd proxmoxUSBcopy
@@ -81,8 +89,7 @@ sudo ./setup/install.sh
 ```
 
 Run `sudo ./setup/install.sh --dry-run` first if you want to see the plan
-without changing anything. A one-command install URL will be added here when
-the repository is published. `--repo-url` and `--ref` only affect that piped
+without changing anything. `--repo-url` and `--ref` only affect the piped
 bootstrap; a checkout install uses the files in the working tree.
 
 ### What the installer asks

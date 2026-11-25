@@ -5,7 +5,7 @@
 # downloads the repository archive into a temp dir and re-execs that checkout.
 set -euo pipefail
 
-REPO_URL="https://github.com/OWNER/proxmoxUSBcopy"
+REPO_URL="https://github.com/manishboharaa/proxmoxUSBcopy"
 REPO_REF="main"
 
 bootstrap_usage() {
