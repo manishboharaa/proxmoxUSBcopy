@@ -107,14 +107,27 @@ case "$command" in
             *'hostname -I'*)
                 printf '%s\n' "${USBC_FAKE_CT_IP:-10.0.0.50}"
                 ;;
-            *'ls -A /mnt/usb'*)
+            *'ls -A /mnt/usb'* | *'find /mnt/usb'*)
+                if [[ ${USBC_FAKE_SOURCE_UNREADABLE:-0} == 1 ]]; then
+                    exit 1
+                fi
                 if [[ -n ${USBC_FAKE_USB_ENTRY:-} ]]; then
                     printf '%s\n' "$USBC_FAKE_USB_ENTRY"
+                fi
+                ;;
+            *'findmnt --mountpoint'*)
+                if [[ " ${USBC_FAKE_CT_MISSING_MOUNT:-} " == *" $last "* ]]; then
+                    exit 1
                 fi
                 ;;
             *'runuser'*)
                 if [[ -n ${USBC_FAKE_VERIFY_FAIL_DEST:-} \
                     && $joined == *"${USBC_FAKE_VERIFY_FAIL_DEST}"* \
+                    && $joined == *'.usbcopy-permission-test'* ]]; then
+                    exit 1
+                fi
+                if [[ -n ${USBC_FAKE_VERIFY_FAIL_PATH:-} \
+                    && $joined == *"${USBC_FAKE_VERIFY_FAIL_PATH}"* \
                     && $joined == *'.usbcopy-permission-test'* ]]; then
                     exit 1
                 fi

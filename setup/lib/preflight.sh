@@ -174,7 +174,9 @@ preflight_destination() {
     local path=$2
     local exists_var=$3
     local available=''
+    local parent=''
 
+    validate_destination_safety "$name" "$path" >/dev/null
     if [[ -e $path ]]; then
         [[ -d $path ]] || die "$name is not a directory: $path"
         if [[ ! -w $path ]]; then
@@ -192,6 +194,17 @@ preflight_destination() {
         fi
         printf -v "$exists_var" '%s' 1
     else
+        parent=${path%/*}
+        [[ -n $parent ]] || parent=/
+        [[ -d $parent ]] \
+            || die "$name parent directory does not exist: $parent"
+        if [[ ! -w $parent ]]; then
+            if ((DRY_RUN == 1)); then
+                warn "$name parent is not writable by this user; a real root install will verify: $parent"
+            else
+                die "$name parent directory is not writable: $parent"
+            fi
+        fi
         log "$name will be created during install: $path"
         printf -v "$exists_var" '%s' 0
     fi

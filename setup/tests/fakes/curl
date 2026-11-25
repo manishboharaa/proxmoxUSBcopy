@@ -13,12 +13,25 @@ fi
 
 output=''
 previous=''
+url=''
 for arg in "$@"; do
     if [[ $previous == -o ]]; then
         output=$arg
     fi
+    case "$arg" in
+        http://* | https://*) url=$arg ;;
+    esac
     previous=$arg
 done
+
+if [[ $url == */api/status ]]; then
+    printf '401 Unauthorized\n' >&2
+    exit 22
+fi
+if [[ $url == */healthz ]]; then
+    printf '{"status":"ok"}\n'
+    exit 0
+fi
 
 if [[ -n $output && $output != /dev/null && -n ${USBC_FAKE_CURL_ARCHIVE:-} ]]; then
     cp -- "$USBC_FAKE_CURL_ARCHIVE" "$output"

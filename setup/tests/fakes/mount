@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# Fake mount for installer tests: log only, never change propagation.
+# Fake mount for installer tests: log and track propagation state.
 set -euo pipefail
 
 if [[ -n ${USBC_FAKE_LOG:-} ]]; then
     printf 'mount %s\n' "$*" >>"$USBC_FAKE_LOG"
 fi
+
+state=${USBC_FAKE_STATE_DIR:-/nonexistent}
+mkdir -p -- "$state"
+case "$*" in
+    *'--bind'*) : >"$state/self-bind" ;;
+    *'--make-rshared'*) : >"$state/rshared" ;;
+esac

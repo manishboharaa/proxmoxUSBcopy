@@ -17,6 +17,9 @@ USBC_MANIFEST_PATH=${USBC_MANIFEST_PATH:-/etc/usbcopy/install-manifest.json}
 USBC_BACKUP_ROOT=${USBC_BACKUP_ROOT:-/etc/usbcopy/backup}
 USBC_BACKUP_STAMP=''
 
+USBC_RO_FALLBACK_MOUNTS=()
+USBC_HOST_MOUNTS=()
+
 ct_mapped_id() {
     local flag=$1
     local id=''
@@ -55,29 +58,69 @@ install_host_file() {
     log "installed $target"
 }
 
+ensure_host_dir() {
+    local path=$1
+    local mode=$2
+
+    if [[ -d $path ]]; then
+        USBC_PREEXISTING_DIRS+=("$path")
+        return 0
+    fi
+    install -d -m "$mode" "$path" || die "could not create $path"
+    USBC_CREATED_DIRS+=("$path")
+}
+
 add_ct_mount() {
     local slot=$1
     local host_path=$2
     local ct_path=$3
     local access=${4:-rw}
     local value="$host_path,mp=$ct_path"
+    local effective=$access
 
     if [[ $access == ro ]]; then
         value+=",ro=1"
     fi
     log "bind mount mp$slot: $host_path -> $ct_path${access:+ ($access)}"
     if pct set "$CT_ID" "-mp$slot" "$value"; then
-        manifest_add_mount "$slot" "$host_path" "$ct_path" "$access"
+        manifest_add_mount "$slot" "$host_path" "$ct_path" "$access" "$effective"
         return 0
     fi
     if [[ $access != ro ]]; then
         die "pct set failed for mount mp$slot ($host_path -> $ct_path)"
     fi
+    effective=rw
+    USBC_RO_FALLBACK_MOUNTS+=("$host_path")
     warn "pct set rejected ro=1 for mp$slot; retrying without it (the host source is already mounted read-only)"
     value="$host_path,mp=$ct_path"
     pct set "$CT_ID" "-mp$slot" "$value" \
         || die "pct set failed for mount mp$slot ($host_path -> $ct_path)"
-    manifest_add_mount "$slot" "$host_path" "$ct_path" "$access"
+    manifest_add_mount "$slot" "$host_path" "$ct_path" "$access" "$effective"
+}
+
+configure_host_propagation() {
+    local self_bind=false
+    local propagation_before=''
+    local propagation_after=''
+
+    if findmnt --mountpoint "$USBC_USB_INGEST_DIR" >/dev/null 2>&1; then
+        log "$USBC_USB_INGEST_DIR is already a mountpoint"
+    else
+        mount --bind "$USBC_USB_INGEST_DIR" "$USBC_USB_INGEST_DIR" \
+            || die "could not self-bind $USBC_USB_INGEST_DIR for shared propagation"
+        self_bind=true
+        log "self-bound $USBC_USB_INGEST_DIR so propagation changes stay local to it"
+    fi
+    propagation_before=$(findmnt -no PROPAGATION -T "$USBC_USB_INGEST_DIR" 2>/dev/null || printf 'unknown')
+    mount --make-rshared "$USBC_USB_INGEST_DIR" \
+        || die "could not make $USBC_USB_INGEST_DIR rshared"
+    propagation_after=$(findmnt -no PROPAGATION -T "$USBC_USB_INGEST_DIR" 2>/dev/null || printf 'unknown')
+    USBC_HOST_MOUNTS+=(
+        "$USBC_USB_INGEST_DIR"$'\t'"self-bind"$'\t'"$self_bind"$'\t'"$propagation_before"$'\t'"$propagation_after"
+    )
+    if [[ $propagation_after != *shared* ]]; then
+        warn "$USBC_USB_INGEST_DIR propagation is '$propagation_after', not 'shared'; USB hotplug may not reach CT $CT_ID"
+    fi
 }
 
 configure_host() {
@@ -91,32 +134,25 @@ configure_host() {
         return 0
     fi
 
-    USBC_BACKUP_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
     for destination in "$DEST_MOVIES" "$DEST_SERIES"; do
-        [[ $destination != *,* ]] \
-            || die "destination path contains a comma, which PVE bind-mount options cannot represent: $destination"
+        validate_destination_safety "Movies/Series destination" "$destination" >/dev/null
     done
-    if [[ -n $DEST_EXTRA && $DEST_EXTRA == *,* ]]; then
-        die "destination path contains a comma, which PVE bind-mount options cannot represent: $DEST_EXTRA"
+    if [[ -n $DEST_EXTRA ]]; then
+        validate_destination_safety "extra destination" "$DEST_EXTRA" >/dev/null
     fi
+
+    USBC_BACKUP_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
     mapped_uid=$(ct_mapped_id -u)
     mapped_gid=$(ct_mapped_id -g)
 
-    install -d -m 0755 "$USBC_USB_INGEST_DIR" \
-        || die "could not create $USBC_USB_INGEST_DIR"
-    install -d -m 0750 "$USBC_SPOOL_DIR" \
-        || die "could not create $USBC_SPOOL_DIR"
-    USBC_CREATED_DIRS+=("$USBC_USB_INGEST_DIR" "$USBC_SPOOL_DIR")
+    ensure_host_dir "$USBC_USB_INGEST_DIR" 0755
+    ensure_host_dir "$USBC_SPOOL_DIR" 0750
     chown "$mapped_uid:$mapped_gid" "$USBC_SPOOL_DIR" \
         || die "could not chown $USBC_SPOOL_DIR"
     chmod 0750 "$USBC_SPOOL_DIR" || die "could not chmod $USBC_SPOOL_DIR"
 
     for destination in "$DEST_MOVIES" "$DEST_SERIES"; do
-        if [[ ! -d $destination ]]; then
-            install -d -m 0755 "$destination" \
-                || die "could not create destination $destination"
-            USBC_CREATED_DIRS+=("$destination")
-        fi
+        ensure_host_dir "$destination" 0755
         # Only the destination root is chowned: existing Jellyfin files and
         # folders inside it keep their current ownership.
         chown "$mapped_uid:$mapped_gid" "$destination" \
@@ -124,11 +160,7 @@ configure_host() {
     done
     if [[ -n $DEST_EXTRA ]]; then
         EXTRA_KEY=$(destination_extra_key)
-        if [[ ! -d $DEST_EXTRA ]]; then
-            install -d -m 0755 "$DEST_EXTRA" \
-                || die "could not create destination $DEST_EXTRA"
-            USBC_CREATED_DIRS+=("$DEST_EXTRA")
-        fi
+        ensure_host_dir "$DEST_EXTRA" 0755
         chown "$mapped_uid:$mapped_gid" "$DEST_EXTRA" \
             || die "could not chown destination root $DEST_EXTRA"
     fi
@@ -158,12 +190,7 @@ configure_host() {
         "$USBC_SYSTEMD_DIR/usbcopy-scan-usb.service"
     )
 
-    # New USB mounts appear under /srv/usb-ingest after the CT is already
-    # running. Mark the host source shared so recursive PVE bind mounts see
-    # them; the manual checklist in the Task 20 report verifies propagation.
-    if ! mount --make-rshared "$USBC_USB_INGEST_DIR"; then
-        warn "could not make $USBC_USB_INGEST_DIR shared; USB mounts may not propagate into CT $CT_ID"
-    fi
+    configure_host_propagation
 
     systemctl daemon-reload || die "systemctl daemon-reload failed on the host"
     systemctl enable usbcopy-scan-usb.service \
@@ -174,7 +201,7 @@ configure_host() {
     slot=0
     add_ct_mount "$slot" "$USBC_USB_INGEST_DIR" /mnt/usb ro
     slot=$((slot + 1))
-    add_ct_mount "$slot" "$USBC_SPOOL_DIR" /run/usbcopy/events rw
+    add_ct_mount "$slot" "$USBC_SPOOL_DIR" /var/lib/usbcopy/events rw
     slot=$((slot + 1))
     add_ct_mount "$slot" "$DEST_MOVIES" /data/movies rw
     slot=$((slot + 1))
@@ -184,6 +211,10 @@ configure_host() {
         add_ct_mount "$slot" "$DEST_EXTRA" "/data/${DEST_EXTRA##*/}" rw
     fi
     pct start "$CT_ID" || die "could not start CT $CT_ID after adding bind mounts"
+    ct_exec findmnt --mountpoint /mnt/usb >/dev/null 2>&1 \
+        || die "the USB bind mount is not visible inside CT $CT_ID after restart"
+    ct_exec findmnt --mountpoint /var/lib/usbcopy/events >/dev/null 2>&1 \
+        || die "the event spool bind mount is not visible inside CT $CT_ID after restart"
     wait_for_usbcopy_app
     log "host configuration complete; mapped UID:GID $mapped_uid:$mapped_gid"
 }

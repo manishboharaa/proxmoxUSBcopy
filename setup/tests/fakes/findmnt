@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Fake findmnt for installer tests: deterministic mountpoint/propagation
+# answers driven by the fake state directory.
+set -euo pipefail
+
+if [[ -n ${USBC_FAKE_LOG:-} ]]; then
+    printf 'findmnt %s\n' "$*" >>"$USBC_FAKE_LOG"
+fi
+
+state=${USBC_FAKE_STATE_DIR:-/nonexistent}
+last=''
+for arg in "$@"; do
+    last=$arg
+done
+
+case "$*" in
+    *--mountpoint*)
+        if [[ -e $state/self-bind && $last == "${USBC_USB_INGEST_DIR:-/srv/usb-ingest}" ]]; then
+            exit 0
+        fi
+        if [[ " ${USBC_FAKE_MOUNTPOINTS:-} " == *" $last "* ]]; then
+            exit 0
+        fi
+        exit 1
+        ;;
+    *PROPAGATION*)
+        if [[ -e $state/rshared ]]; then
+            printf 'shared\n'
+        else
+            printf '%s\n' "${USBC_FAKE_PROPAGATION:-private}"
+        fi
+        ;;
+esac

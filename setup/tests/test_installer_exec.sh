@@ -124,12 +124,21 @@ reset_fixtures() {
     USBC_INSTALLED_FILES=()
     USBC_CONTAINER_FILES=()
     USBC_CREATED_DIRS=()
+    USBC_PREEXISTING_DIRS=()
     USBC_CONTAINER_DIRS=()
     USBC_INSTALLED_UNITS=()
+    USBC_CONTAINER_UNITS=()
     USBC_INSTALLED_UDEV=()
     USBC_BACKUP_FILES=()
     USBC_MOUNTS=()
+    USBC_HOST_MOUNTS=()
+    USBC_RO_FALLBACK_MOUNTS=()
+    USBC_INSTALLER_MODE=checkout
+    REPO_URL='https://example.test/owner/proxmoxUSBcopy'
+    REPO_REF='main'
     unset USBC_FAKE_USER_ABSENT USBC_FAKE_PRESENT_PACKAGES
+    unset USBC_FAKE_SOURCE_UNREADABLE USBC_FAKE_CT_MISSING_MOUNT
+    unset USBC_FAKE_VERIFY_FAIL_PATH USBC_FAKE_USB_ENTRY
     : >"$USBC_FAKE_LOG"
     rm -rf -- "${WORK:?}/media" "${WORK:?}/srv" "${WORK:?}/usr" "${WORK:?}/etc" "${WORK:?}/pushed" "${WORK:?}/fake-state"
 }
@@ -171,6 +180,17 @@ assert_not_contains 'pveam download' "$log" 'fake log'
 assert_contains 'pct create 101 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst' "$log" 'fake log'
 pass "create_ct reuses an already-downloaded template"
 
+reset_fixtures
+NET_MODE=static
+NET_IP=10.0.0.5/24
+NET_GW=10.0.0.1
+NET_DNS=''
+create_ct >"$WORK/create-static.out" 2>&1
+log=$(<"$USBC_FAKE_LOG")
+assert_contains '--net0 name=eth0,bridge=vmbr0,ip=10.0.0.5/24,gw=10.0.0.1' "$log" 'fake log'
+assert_contains '--nameserver 10.0.0.1' "$log" 'fake log'
+pass "static networking without DNS falls back to the gateway nameserver"
+
 printf '\n== install_app ==\n'
 reset_fixtures
 unset USBC_FAKE_BUSY_PORTS
@@ -196,6 +216,8 @@ assert_contains 'systemctl start usbcopy.service' "$log" 'fake log'
 assert_contains 'chown root:usbcopy /etc/usbcopy/config.toml' "$log" 'fake log'
 assert_contains 'chmod 0640 /etc/usbcopy/config.toml' "$log" 'fake log'
 assert_contains 'http://10.0.0.50:8089' "$out" 'install output'
+assert_contains 'http://10.0.0.50:8089/healthz' "$log" 'fake log'
+assert_not_contains '/api/status' "$log" 'fake log'
 config="$USBC_FAKE_PUSH_DIR/config.toml"
 [[ -f $config ]] || fail "install_app did not push config.toml"
 assert_file_contains 'port = 8089' "$config" 'config'
@@ -203,7 +225,7 @@ assert_file_contains '[destinations.movies]' "$config" 'config'
 assert_file_contains 'path = "/data/movies"' "$config" 'config'
 assert_file_contains 'path = "/data/series"' "$config" 'config'
 assert_file_contains 'path = "/data/other"' "$config" 'config'
-assert_file_contains 'events_dir = "/run/usbcopy/events"' "$config" 'config'
+assert_file_contains 'events_dir = "/var/lib/usbcopy/events"' "$config" 'config'
 assert_file_contains 'db_path = "/var/lib/usbcopy/usbcopy.db"' "$config" 'config'
 assert_file_contains 'session_secret = ' "$config" 'config'
 assert_file_contains 'password_hash = "$2b$' "$config" 'config'
@@ -218,7 +240,7 @@ assert cfg.port == 8089, cfg
 assert str(cfg.destinations["movies"].path) == "/data/movies", cfg
 assert str(cfg.destinations["series"].path) == "/data/series", cfg
 assert str(cfg.destinations["other"].path) == "/data/other", cfg
-assert str(cfg.events_dir) == "/run/usbcopy/events", cfg
+assert str(cfg.events_dir) == "/var/lib/usbcopy/events", cfg
 assert str(cfg.db_path) == "/var/lib/usbcopy/usbcopy.db", cfg
 assert str(cfg.mounts_root) == "/mnt/usb", cfg
 assert cfg.default_mode == "review", cfg
@@ -262,9 +284,27 @@ ADMIN_PASSWORD=$(printf 'é%.0s' {1..37})
 assert_fails_with '72' install_app
 pass "the 72-byte cap counts UTF-8 bytes, not characters"
 
+reset_fixtures
+ADMIN_PASSWORD='once-secret'
+ADMIN_PASSWORD_GENERATED=1
+out=$(announce_generated_password 2>&1)
+assert_contains 'SAVE THIS ADMIN PASSWORD NOW' "$out" 'password announcement'
+assert_contains 'once-secret' "$out" 'password announcement'
+pass "the generated password is announced in a clear save-now block"
+
+USBC_INSTALLER_MODE=bootstrap
+REPO_URL='https://example.test/owner/proxmoxUSBcopy'
+REPO_REF='main'
+out=$(installer_uninstall_hint)
+assert_contains '--uninstall' "$out" 'uninstall hint'
+assert_contains 'https://example.test/owner/proxmoxUSBcopy@main' "$out" 'uninstall hint'
+assert_not_contains '/tmp' "$out" 'uninstall hint'
+USBC_INSTALLER_MODE=checkout
+pass "the bootstrap uninstall hint is stable and not a temp checkout path"
+
 printf '\n== configure_host ==\n'
 reset_fixtures
-mkdir -p -- "$DEST_SERIES"
+mkdir -p -- "$DEST_SERIES" "$USBC_SPOOL_DIR"
 printf 'keep me\n' >"$DEST_SERIES/existing.txt"
 mkdir -p -- "$USBC_HOST_LIB_DIR"
 printf 'OLD HOST SCRIPT\n' >"$USBC_HOST_LIB_DIR/mount-usb.sh"
@@ -288,7 +328,13 @@ backup=$(find "$USBC_BACKUP_ROOT" -name mount-usb.sh -print -quit)
 [[ -n $backup ]] || fail "pre-existing host script was not backed up"
 assert_contains 'OLD HOST SCRIPT' "$(<"$backup")" 'backup'
 assert_file_contains 'proxmoxUSBcopy: mount one USB' "$USBC_HOST_LIB_DIR/mount-usb.sh" 'installed script'
+assert_contains "mount --bind $USBC_USB_INGEST_DIR $USBC_USB_INGEST_DIR" "$log" 'fake log'
 assert_contains "mount --make-rshared $USBC_USB_INGEST_DIR" "$log" 'fake log'
+assert_contains "findmnt --mountpoint $USBC_USB_INGEST_DIR" "$log" 'fake log'
+assert_contains 'findmnt -no PROPAGATION' "$log" 'fake log'
+assert_contains "findmnt --mountpoint $USBC_USB_INGEST_DIR" "$(<"$USBC_FAKE_LOG")" 'fake log'
+assert_contains 'pct exec 101 -- findmnt --mountpoint /mnt/usb' "$log" 'fake log'
+assert_contains 'pct exec 101 -- findmnt --mountpoint /var/lib/usbcopy/events' "$log" 'fake log'
 assert_contains 'systemctl daemon-reload' "$log" 'fake log'
 assert_contains 'systemctl enable usbcopy-scan-usb.service' "$log" 'fake log'
 assert_contains 'udevadm control --reload-rules' "$log" 'fake log'
@@ -303,6 +349,13 @@ assert_contains "mp2: $DEST_MOVIES" "$log" 'fake log'
 assert_contains "mp3: $DEST_SERIES" "$log" 'fake log'
 assert_contains "mp4: $DEST_EXTRA" "$log" 'fake log'
 assert_contains "$USBC_USB_INGEST_DIR,mp=/mnt/usb,ro=1" "$log" 'fake log'
+[[ " ${USBC_PREEXISTING_DIRS[*]} " == *" $DEST_SERIES "* ]] || fail "existing destination was not recorded as pre-existing"
+[[ " ${USBC_PREEXISTING_DIRS[*]} " == *" $USBC_SPOOL_DIR "* ]] || fail "existing spool was not recorded as pre-existing"
+[[ " ${USBC_CREATED_DIRS[*]} " != *" $USBC_SPOOL_DIR "* ]] || fail "pre-existing spool was recorded as created"
+[[ " ${USBC_CREATED_DIRS[*]} " == *" $DEST_MOVIES "* ]] || fail "created Movies destination was not recorded"
+assert_contains 'self-bind' "${USBC_HOST_MOUNTS[0]}" 'host mounts'
+assert_contains 'true' "${USBC_HOST_MOUNTS[0]}" 'host mounts'
+assert_contains 'shared' "${USBC_HOST_MOUNTS[0]}" 'host mounts'
 pass "configure_host creates/chowns only destination roots, installs/backs up host assets, and binds mounts"
 
 : >"$USBC_FAKE_LOG"
@@ -313,6 +366,16 @@ log=$(<"$USBC_FAKE_LOG")
 assert_contains "$USBC_USB_INGEST_DIR,mp=/mnt/usb,ro=1" "$log" 'fake log'
 assert_contains "$USBC_USB_INGEST_DIR,mp=/mnt/usb" "$log" 'fake log'
 pass "a rejected ro=1 bind mount falls back to a plain bind (host source is already read-only)"
+assert_contains "$USBC_USB_INGEST_DIR" "${USBC_RO_FALLBACK_MOUNTS[0]}" 'fallback mounts'
+assert_contains 'ro' "${USBC_MOUNTS[-1]}" 'fallback manifest'
+assert_contains 'rw' "${USBC_MOUNTS[-1]}" 'fallback manifest'
+
+reset_fixtures
+DEST_MOVIES=/etc
+assert_fails_with 'protected host path' configure_host
+assert_not_contains 'chown' "$(<"$USBC_FAKE_LOG")" 'fake log'
+assert_not_contains 'pct exec' "$(<"$USBC_FAKE_LOG")" 'fake log'
+pass "configure_host repeats the protected-path check before any CT or chown call"
 
 printf '\n== verify_permissions ==\n'
 reset_fixtures
@@ -326,21 +389,40 @@ assert_contains '.usbcopy-permission-test' "$log" 'fake log'
 assert_contains '/data/movies' "$log" 'fake log'
 assert_contains '/data/series' "$log" 'fake log'
 assert_contains '/data/other' "$log" 'fake log'
+assert_contains '/var/lib/usbcopy/events' "$log" 'fake log'
+assert_contains 'findmnt --mountpoint /mnt/usb' "$log" 'fake log'
+assert_contains 'findmnt --mountpoint /var/lib/usbcopy/events' "$log" 'fake log'
 assert_not_contains 'chown' "$log" 'fake log'
 assert_not_contains 'chmod' "$log" 'fake log'
-pass "verify_permissions warns about an absent drive and probes every destination as usbcopy"
+pass "verify_permissions checks both binds and probes every destination plus the spool as usbcopy"
 
 : >"$USBC_FAKE_LOG"
 export USBC_FAKE_USB_ENTRY='DCIM'
 out=$(verify_permissions 2>&1)
-assert_contains 'ls -A /mnt/usb' "$(<"$USBC_FAKE_LOG")" 'fake log'
+assert_contains 'find /mnt/usb' "$(<"$USBC_FAKE_LOG")" 'fake log'
 assert_not_contains 'no USB drive is mounted' "$out" 'verify output'
 pass "verify_permissions reads the mounted source when a drive is present"
+
+export USBC_FAKE_SOURCE_UNREADABLE=1
+out=$(verify_permissions 2>&1)
+assert_contains 'cannot read /mnt/usb' "$out" 'verify output'
+unset USBC_FAKE_SOURCE_UNREADABLE
+pass "a source read failure is reported instead of being masked by a pipeline"
 
 export USBC_FAKE_VERIFY_FAIL_DEST='/data/movies'
 assert_fails_with 'cannot create/delete files in /data/movies' verify_permissions
 unset USBC_FAKE_VERIFY_FAIL_DEST
 pass "a destination the app cannot write to fails the install clearly"
+
+export USBC_FAKE_VERIFY_FAIL_PATH='/var/lib/usbcopy/events'
+assert_fails_with 'cannot create/delete files in the event spool' verify_permissions
+unset USBC_FAKE_VERIFY_FAIL_PATH
+pass "a spool the app cannot write to fails the install clearly"
+
+export USBC_FAKE_CT_MISSING_MOUNT='/var/lib/usbcopy/events'
+assert_fails_with 'required bind mount is missing' verify_permissions
+unset USBC_FAKE_CT_MISSING_MOUNT
+pass "a missing spool bind mount fails the install clearly"
 
 printf '\n== manifest ==\n'
 reset_fixtures
@@ -350,16 +432,23 @@ CT_TEMPLATE='debian-12-standard_12.7-1_amd64.tar.zst'
 USBC_INSTALLED_FILES=("$USBC_HOST_LIB_DIR/mount-usb.sh")
 USBC_CONTAINER_FILES=('/etc/usbcopy/config.toml' '/etc/systemd/system/usbcopy.service')
 USBC_CREATED_DIRS=("$DEST_MOVIES" "$USBC_USB_INGEST_DIR")
+USBC_PREEXISTING_DIRS=("$DEST_SERIES")
 USBC_CONTAINER_DIRS=('/mnt/usb' '/data/movies')
 USBC_INSTALLED_UNITS=("$USBC_SYSTEMD_DIR/usbcopy-mount@.service")
+USBC_CONTAINER_UNITS=('usbcopy.service')
 USBC_INSTALLED_UDEV=("$USBC_UDEV_RULES_DIR/99-usbcopy.rules")
 USBC_BACKUP_FILES=("$USBC_BACKUP_ROOT/stamp/usr/local/lib/usbcopy/mount-usb.sh")
-manifest_add_mount 0 "$USBC_USB_INGEST_DIR" /mnt/usb ro
-manifest_add_mount 2 "$DEST_MOVIES" /data/movies rw
+USBC_HOST_MOUNTS=("$USBC_USB_INGEST_DIR"$'\t'self-bind$'\t'true$'\t'private$'\t'shared)
+USBC_INSTALLER_MODE=checkout
+SCRIPT_DIR="$REPO_ROOT/setup"
+manifest_add_mount 0 "$USBC_USB_INGEST_DIR" /mnt/usb ro ro
+manifest_add_mount 2 "$DEST_MOVIES" /data/movies rw rw
+manifest_add_mount 3 "$DEST_EXTRA" /data/other ro rw
 write_manifest
 [[ -f $USBC_MANIFEST_PATH ]] || fail "write_manifest did not create $USBC_MANIFEST_PATH"
 python3 - "$USBC_MANIFEST_PATH" "$DEST_MOVIES" "$DEST_SERIES" "$DEST_EXTRA" "$USBC_USB_INGEST_DIR" <<'PY'
 import json
+import os
 import sys
 
 path, movies, series, extra, usb = sys.argv[1:]
@@ -380,9 +469,35 @@ assert data["mounts"][0] == {
     "slot": "mp0",
     "host_path": usb,
     "ct_path": "/mnt/usb",
+    "read_only_requested": True,
+    "read_only_effective": True,
     "read_only": True,
+    "access": "ro",
 }, data["mounts"]
 assert data["mounts"][1]["read_only"] is False, data["mounts"]
+assert data["mounts"][2]["read_only_requested"] is True, data["mounts"]
+assert data["mounts"][2]["read_only_effective"] is False, data["mounts"]
+assert data["mounts"][2]["access"] == "rw", data["mounts"]
+assert data["host_files"] == ["%s/mount-usb.sh" % os.environ["USBC_HOST_LIB_DIR"]], data
+assert data["container_files"] == [
+    "/etc/usbcopy/config.toml",
+    "/etc/systemd/system/usbcopy.service",
+], data
+assert data["host_dirs"], data
+assert data["pre_existing_dirs"] == [series], data
+assert data["container_dirs"], data
+assert data["host_units"], data
+assert data["container_units"] == ["usbcopy.service"], data
+assert data["host_mounts"] == [{
+    "path": usb,
+    "type": "self-bind",
+    "self_bind_created": True,
+    "propagation_before": "private",
+    "propagation_after": "shared",
+}], data["host_mounts"]
+assert data["installer"]["mode"] == "checkout", data
+assert data["installer"]["repo_url"].startswith("https://"), data
+assert data["installer"]["checkout"].endswith("/setup"), data
 assert "/etc/systemd/system/usbcopy.service" in data["files"], data["files"]
 assert data["units"], data
 assert data["udev"], data
@@ -409,16 +524,19 @@ cat >"$BOOT_SRC/setup/install.sh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" >"${BOOT_ARGS_FILE:?}"
+printf '%s\n' "${USBC_INSTALLER_MODE:-unset}" >"${BOOT_MODE_FILE:?}"
 printf 'bootstrap checkout ran\n'
 STUB
 chmod +x "$BOOT_SRC/setup/install.sh"
 "$REAL_TAR" -C "$WORK/bootstrap-src" -czf "$WORK/repo.tar.gz" proxmoxUSBcopy-main
 : >"$USBC_FAKE_LOG"
 out=$(USBC_FAKE_CURL_ARCHIVE="$WORK/repo.tar.gz" BOOT_ARGS_FILE="$WORK/boot-args" \
+    BOOT_MODE_FILE="$WORK/boot-mode" \
     bash -s -- --dry-run --yes --repo-url https://example.test/owner/proxmoxUSBcopy --ref main \
     <"$INSTALL" 2>&1)
 assert_contains 'bootstrap checkout ran' "$out" 'bootstrap output'
 args=$(<"$WORK/boot-args")
+assert_contains 'bootstrap' "$(<"$WORK/boot-mode")" 'bootstrap mode'
 assert_contains '--dry-run' "$args" 'bootstrap args'
 assert_contains '--yes' "$args" 'bootstrap args'
 assert_contains '--repo-url' "$args" 'bootstrap args'

@@ -123,6 +123,7 @@ prompt_required_destination() {
         die "$label destination is required"
     fi
     value=$(canonical_path "$label destination" "$value")
+    validate_destination_safety "$label destination" "$value" >/dev/null
     printf -v "$varname" '%s' "$value"
 }
 
@@ -135,6 +136,7 @@ prompt_extra_destination() {
             ;;
         *)
             DEST_EXTRA=$(canonical_path "extra destination" "$DEST_EXTRA")
+            validate_destination_safety "extra destination" "$DEST_EXTRA" >/dev/null
             base=${DEST_EXTRA##*/}
             [[ $base =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
                 || die "extra destination folder name must use letters, digits, dot, dash, or underscore: $base"
@@ -181,8 +183,21 @@ prompt_password() {
     else
         ADMIN_PASSWORD_GENERATED=0
     fi
+    validate_admin_password "$ADMIN_PASSWORD"
     ((${#ADMIN_PASSWORD} >= 8)) \
         || warn "admin password is shorter than 8 characters"
+}
+
+announce_generated_password() {
+    if ((ADMIN_PASSWORD_GENERATED != 1)); then
+        return 0
+    fi
+    printf '\n'
+    printf '============================================================\n'
+    printf ' SAVE THIS ADMIN PASSWORD NOW (it is shown only once)\n'
+    printf ' username: admin\n'
+    printf ' password: %s\n' "$ADMIN_PASSWORD"
+    printf '============================================================\n\n'
 }
 
 collect_answers() {

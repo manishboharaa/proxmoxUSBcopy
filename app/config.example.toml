@@ -38,5 +38,5 @@ skip_hidden_root_dirs = true
 # the defaults; override only for development or non-standard layouts.
 # [paths]
 # db_path = "/var/lib/usbcopy/usbcopy.db"
-# events_dir = "/run/usbcopy/events"
+# events_dir = "/var/lib/usbcopy/events"
 # mounts_root = "/mnt/usb"

@@ -135,7 +135,7 @@ bootstrap_from_pipe() {
         printf 'install.sh: error: the repository archive does not contain setup/install.sh\n' >&2
         exit 1
     fi
-    if bash "$checkout" "${original[@]}"; then
+    if USBC_INSTALLER_MODE=bootstrap bash "$checkout" "${original[@]}"; then
         status=0
     else
         status=$?
@@ -148,6 +148,7 @@ if [[ -z ${BASH_SOURCE[0]:-} || ! -f ${BASH_SOURCE[0]} ]]; then
     bootstrap_from_pipe "$@"
 fi
 
+USBC_INSTALLER_MODE=${USBC_INSTALLER_MODE:-checkout}
 PROG=${0##*/}
 SCRIPT_SOURCE=${BASH_SOURCE[0]}
 SCRIPT_DIR=${SCRIPT_SOURCE%/*}
@@ -296,12 +297,16 @@ print_install_result() {
     log "installation complete"
     log "dashboard: http://${CT_IP:-<ct-ip>}:$PORT (username admin)"
     if ((ADMIN_PASSWORD_GENERATED == 1)); then
-        printf 'Admin password: %s\n' "$ADMIN_PASSWORD"
+        log "admin password: use the save-now block printed before the CT was created"
     else
         log "admin password: the value supplied during install"
     fi
     log "logs: pct exec $CT_ID -- journalctl -u usbcopy.service -f"
-    log "uninstall: $SCRIPT_DIR/uninstall.sh"
+    log "host logs: journalctl -u 'usbcopy-mount@<device>.service' -f"
+    if ((${#USBC_RO_FALLBACK_MOUNTS[@]} > 0)); then
+        warn "ro=1 was rejected for ${USBC_RO_FALLBACK_MOUNTS[*]}; the bind is writable at the bind layer, but the host USB source is still mounted read-only"
+    fi
+    log "$(installer_uninstall_hint)"
 }
 
 print_plan() {
@@ -354,7 +359,7 @@ print_plan() {
     plan "stop CT $CT_ID before adding bind mounts"
     plan "add bind mounts to CT $CT_ID: USB root read-only, spool read-write, destinations read-write"
     plan "mount /srv/usb-ingest -> /mnt/usb (read-only)"
-    plan "mount /srv/usbcopy/events -> /run/usbcopy/events"
+    plan "mount /srv/usbcopy/events -> /var/lib/usbcopy/events"
     plan "mount $DEST_MOVIES -> /data/movies"
     plan "mount $DEST_SERIES -> /data/series"
     if [[ -n $DEST_EXTRA ]]; then
@@ -369,7 +374,7 @@ print_plan() {
     plan "verify the usbcopy user can read a source folder and write each destination"
     plan "write install manifest /etc/usbcopy/install-manifest.json"
     plan "back up any modified host files under /etc/usbcopy/backup/<timestamp>"
-    plan "health check GET /api/status from the host"
+    plan "health check GET /healthz from the host"
     if ((ADMIN_PASSWORD_GENERATED == 1)); then
         plan "generate the admin password; it will be printed once at the end of a real install"
     else
@@ -412,6 +417,7 @@ main() {
     preflight_ct_ids
 
     collect_answers "$(default_image_storage)" "$(next_free_ct_id)"
+    validate_admin_password "$ADMIN_PASSWORD"
     preflight_destinations
     print_plan
     confirm_summary
@@ -422,6 +428,7 @@ main() {
     fi
 
     manifest_check_absent
+    announce_generated_password
     create_ct
     install_app
     configure_host

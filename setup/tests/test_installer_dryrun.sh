@@ -70,7 +70,7 @@ assert_contains 'PLAN: download Debian 12 LXC template to storage local' "$out"
 assert_contains 'PLAN: CT 101 settings: hostname=usbcopy storage=local-lvm disk=8GB ram=1024MB cores=2 swap=512MB unprivileged=1 onboot=1 bridge=vmbr0 ip=dhcp' "$out"
 assert_contains 'PLAN: stop CT 101 before adding bind mounts' "$out"
 assert_contains 'PLAN: start CT 101 after bind mounts' "$out"
-assert_contains 'PLAN: health check GET /api/status from the host' "$out"
+assert_contains 'PLAN: health check GET /healthz from the host' "$out"
 assert_contains 'PLAN: back up any modified host files under /etc/usbcopy/backup/<timestamp>' "$out"
 assert_contains 'PLAN: start CT 101' "$out"
 assert_contains 'PLAN: apt-get update in CT 101' "$out"
@@ -79,7 +79,7 @@ assert_contains 'PLAN: copy application files to /opt/usbcopy in CT 101' "$out"
 assert_contains 'PLAN: create host directory /srv/usb-ingest' "$out"
 assert_contains 'PLAN: create host directory /srv/usbcopy/events' "$out"
 assert_contains 'PLAN: mount /srv/usb-ingest -> /mnt/usb (read-only)' "$out"
-assert_contains 'PLAN: mount /srv/usbcopy/events -> /run/usbcopy/events' "$out"
+assert_contains 'PLAN: mount /srv/usbcopy/events -> /var/lib/usbcopy/events' "$out"
 assert_contains 'PLAN: install udev rule /etc/udev/rules.d/99-usbcopy.rules' "$out"
 assert_contains 'PLAN: install systemd units usbcopy-mount@.service and usbcopy-scan-usb.service' "$out"
 assert_contains 'PLAN: verify the usbcopy user can read a source folder and write each destination' "$out"
@@ -193,6 +193,43 @@ pass "storage without images support is rejected"
 assert_fails_with 'unknown argument' "$INSTALL" --bogus
 pass "unknown flag is rejected"
 
+assert_fails_with 'protected host path' \
+    env USBC_ANSWERS="101 usbcopy local-lvm 8 1024 2 dhcp /etc /tmp/series '' '' no 8088 secret" \
+    "$INSTALL" --dry-run --yes
+pass "protected system paths are rejected before planning"
+
+assert_fails_with 'USB ingest root' \
+    env USBC_ANSWERS="101 usbcopy local-lvm 8 1024 2 dhcp /srv/usb-ingest/movies /tmp/series '' '' no 8088 secret" \
+    "$INSTALL" --dry-run --yes
+pass "destinations overlapping the USB ingest root are rejected"
+
+assert_fails_with 'comma' \
+    env USBC_ANSWERS="101 usbcopy local-lvm 8 1024 2 dhcp /tmp/movies,evil /tmp/series '' '' no 8088 secret" \
+    "$INSTALL" --dry-run --yes
+pass "comma-containing destinations are rejected before planning"
+
+assert_fails_with 'parent directory does not exist' \
+    env USBC_ANSWERS="101 usbcopy local-lvm 8 1024 2 dhcp $WORK/no-parent/movies /tmp/series '' '' no 8088 secret" \
+    "$INSTALL" --dry-run --yes
+pass "missing destination parents are rejected before CT creation"
+
+assert_fails_with "must not contain '='" \
+    env USBC_ANSWERS="101 usbcopy local-lvm 8 1024 2 dhcp /tmp/movies=evil /tmp/series '' '' no 8088 secret" \
+    "$INSTALL" --dry-run --yes
+pass "equals signs in destination paths are rejected before planning"
+
+LONG_PASSWORD=$(printf 'a%.0s' {1..73})
+: >"$USBC_FAKE_LOG"
+out=$(USBC_ANSWERS="101 usbcopy local-lvm 8 1024 2 dhcp /tmp/movies /tmp/series '' '' no 8088 $LONG_PASSWORD" \
+    "$INSTALL" --dry-run --yes 2>&1) && status=0 || status=$?
+((status != 0)) || fail "73-byte password unexpectedly succeeded"
+assert_contains '72' "$out" 'password cap output'
+assert_not_contains 'PLAN:' "$out" 'password cap output'
+if grep -q 'pct create' "$USBC_FAKE_LOG"; then
+    fail "73-byte password was rejected after pct create"
+fi
+pass "the 72-byte password cap is enforced before the plan and CT creation"
+
 assert_fails_with 'uninstall.sh is not available' "$INSTALL" --uninstall
 pass "--uninstall fails clearly when uninstall.sh is absent"
 
@@ -271,7 +308,7 @@ for needle in \
     assert_contains "$needle" "$out" 'complete plan'
 done
 assert_contains 'unprivileged=1 onboot=1' "$out"
-assert_contains 'PLAN: health check GET /api/status from the host' "$out"
+assert_contains 'PLAN: health check GET /healthz from the host' "$out"
 assert_contains 'PLAN: stop CT 101 before adding bind mounts' "$out"
 assert_contains 'PLAN: start CT 101 after bind mounts' "$out"
 

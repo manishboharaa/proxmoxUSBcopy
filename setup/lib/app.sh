@@ -11,23 +11,12 @@ USBC_APP_SOURCE=${USBC_APP_SOURCE:-$APP_LIB_DIR/../../app}
 APP_CT_DIR=/opt/usbcopy
 APP_CT_CONFIG=/etc/usbcopy/config.toml
 APP_CT_DATA=/var/lib/usbcopy
-APP_CT_EVENTS=/run/usbcopy/events
+APP_CT_EVENTS=/var/lib/usbcopy/events
 APP_CT_MOUNTS=/mnt/usb
 APP_CT_UNIT=/etc/systemd/system/usbcopy.service
 EXTRA_KEY=''
 
 CT_PACKAGES=(python3 python3-venv python3-pip ca-certificates curl)
-
-validate_admin_password() {
-    local password=$1
-    local LC_ALL=C
-    local bytes=${#password}
-
-    [[ -n $password ]] || die "admin password must not be empty"
-    if ((bytes > 72)); then
-        die "admin password is ${bytes} UTF-8 bytes; bcrypt accepts at most 72 bytes; choose a shorter password"
-    fi
-}
 
 generate_session_secret() {
     local secret
@@ -136,7 +125,7 @@ lines.extend(
         "",
         "[paths]",
         f"db_path = {quoted('/var/lib/usbcopy/usbcopy.db')}",
-        f"events_dir = {quoted('/run/usbcopy/events')}",
+        f"events_dir = {quoted('/var/lib/usbcopy/events')}",
         f"mounts_root = {quoted('/mnt/usb')}",
         "",
     ]
@@ -171,7 +160,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/var/lib/usbcopy /run/usbcopy /data
+ReadWritePaths=/var/lib/usbcopy /data
 StandardOutput=journal
 StandardError=journal
 
@@ -189,7 +178,7 @@ wait_for_usbcopy_app() {
         if ct_exec systemctl is-active --quiet usbcopy.service >/dev/null 2>&1; then
             CT_IP=$(ct_exec hostname -I 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) { print $i; exit }}')
             if [[ -n $CT_IP ]] \
-                && curl -fsS --max-time 5 "http://$CT_IP:$PORT/api/status" >/dev/null 2>&1; then
+                && curl -fsS --max-time 5 "http://$CT_IP:$PORT/healthz" >/dev/null 2>&1; then
                 log "dashboard: http://$CT_IP:$PORT (username admin)"
                 return 0
             fi
@@ -321,35 +310,55 @@ sys.stdout.write(hash_password(sys.stdin.read()))'
     wait_for_usbcopy_app
 }
 
+ct_probe_write() {
+    local path=$1
+    local probe_script='set -eu
+probe="$1/.usbcopy-permission-test.$$"
+trap "rm -f -- \"$probe\"" EXIT
+: >"$probe"
+rm -f -- "$probe"
+trap - EXIT'
+
+    ct_exec runuser -u usbcopy -- sh -c "$probe_script" sh "$path"
+}
+
 verify_permissions() {
     local failed=0
     local first_entry=''
     local destination=''
+    local mount=''
 
     if ((DRY_RUN == 1)); then
         plan "verify the usbcopy user can read a source folder and write each destination"
         return 0
     fi
 
-    if first_entry=$(ct_exec runuser -u usbcopy -- sh -c 'ls -A /mnt/usb 2>/dev/null | head -n 1'); then
+    for mount in /mnt/usb "$APP_CT_EVENTS"; do
+        if ! ct_exec findmnt --mountpoint "$mount" >/dev/null 2>&1; then
+            die "required bind mount is missing in CT $CT_ID: $mount"
+        fi
+    done
+
+    if first_entry=$(ct_exec runuser -u usbcopy -- sh -c \
+        'find /mnt/usb -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null'); then
         if [[ -z $first_entry ]]; then
             warn "no USB drive is mounted at /mnt/usb yet; skipping the source read check (connect a drive and use the dashboard)"
-        elif ! ct_exec runuser -u usbcopy -- sh -c 'test -r /mnt/usb && ls -A /mnt/usb >/dev/null 2>&1'; then
-            warn "usbcopy cannot read /mnt/usb; check the host mount permissions; source contents were not modified"
         fi
     else
-        warn "could not inspect /mnt/usb as usbcopy; source contents were not modified"
+        warn "usbcopy cannot read /mnt/usb; check the host mount permissions; source contents were not modified"
     fi
 
     while IFS= read -r destination; do
-        if ! ct_exec runuser -u usbcopy -- sh -c \
-            'set -eu; test -w "$1"; probe="$1/.usbcopy-permission-test.$$"; : >"$probe"; rm -f "$probe"' \
-            sh "$destination"; then
+        if ! ct_probe_write "$destination"; then
             warn "usbcopy cannot create/delete files in $destination"
             failed=1
         fi
     done < <(ct_destination_paths)
+    if ! ct_probe_write "$APP_CT_EVENTS"; then
+        warn "usbcopy cannot create/delete files in the event spool $APP_CT_EVENTS"
+        failed=1
+    fi
     ((failed == 0)) \
-        || die "permission check failed; fix the destination ownership and re-run the installer (repair is not available in this build)"
+        || die "permission check failed; fix the destination/spool ownership and re-run the installer (repair is not available in this build)"
     log "permission check passed for usbcopy in CT $CT_ID"
 }

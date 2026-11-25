@@ -122,13 +122,13 @@ Proxmox host
 │       └─ write event JSON → /srv/usbcopy/events/
 ├─ bind mounts into CT
 │   ├─ /srv/usb-ingest        → /mnt/usb          (ro)
-│   ├─ /srv/usbcopy/events    → /run/usbcopy/events (rw)
+│   ├─ /srv/usbcopy/events    → /var/lib/usbcopy/events (rw)
 │   ├─ <Movies path>          → /data/movies      (rw)
 │   └─ <Series path>          → /data/series      (rw)
 └─ LXC CT (unprivileged, Debian 12, onboot=1)
     ├─ usbcopy.service  (uvicorn, port 8088)
     │   ├─ FastAPI app + Jinja2 dashboard + SSE
-    │   ├─ inotify watcher on /run/usbcopy/events
+    │   ├─ inotify watcher on /var/lib/usbcopy/events
     │   ├─ inventory scanner + media classifier
     │   ├─ single copy worker (queue)
     │   └─ SQLite (/var/lib/usbcopy/usbcopy.db)
@@ -247,7 +247,7 @@ Steps:
 5. Push app files and config; enable `usbcopy.service`.
 6. Host: create `/srv/usb-ingest`, `/srv/usbcopy/events`, destination dirs; compute the CT's mapped UID for `usbcopy`; `chown` only the destination root (not its existing contents); add udev rule, mount unit, reload systemd/udev; stop CT, add bind mounts, start CT.
 7. Permission test inside CT as `usbcopy`: read a source folder if a drive is present, write/remove a test file in each destination. Warn clearly if source files are unreadable; never chmod the source.
-8. Health check `GET /api/status` from the host; print `http://<CT-IP>:<port>`, username `admin`, password (or note where it was generated), log paths, `uninstall` command.
+8. Health check `GET /healthz` from the host; print `http://<CT-IP>:<port>`, username `admin`, log paths, and the `uninstall` command. A generated admin password is printed once immediately after confirmation, before the CT is created.
 9. Write manifest + backups; on any failure, offer rollback (destroy new CT, remove added files/units, reload udev/systemd).
 
 Dependencies installed only if missing. No package is removed on uninstall unless the installer added it and the user opts in (default: leave host packages).

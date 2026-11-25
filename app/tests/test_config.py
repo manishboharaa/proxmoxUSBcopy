@@ -99,7 +99,7 @@ def test_example_config_matches_design_defaults():
 def test_paths_default_to_design_locations(tmp_path):
     cfg = load_config(write_config(tmp_path))
     assert cfg.db_path == Path("/var/lib/usbcopy/usbcopy.db")
-    assert cfg.events_dir == Path("/run/usbcopy/events")
+    assert cfg.events_dir == Path("/var/lib/usbcopy/events")
     assert cfg.mounts_root == Path("/mnt/usb")
 
 

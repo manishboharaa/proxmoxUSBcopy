@@ -136,8 +136,8 @@ create_ct() {
         --hostname "$CT_HOSTNAME"
         --net0 "$net0"
     )
-    if [[ $NET_MODE == static && -n $NET_DNS ]]; then
-        args+=(--nameserver "$NET_DNS")
+    if [[ $NET_MODE == static ]]; then
+        args+=(--nameserver "${NET_DNS:-$NET_GW}")
     fi
     pct "${args[@]}" || die "pct create failed for CT $CT_ID"
     CT_CREATED=1

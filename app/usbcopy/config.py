@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 DEFAULT_DB_PATH = Path("/var/lib/usbcopy/usbcopy.db")
-DEFAULT_EVENTS_DIR = Path("/run/usbcopy/events")
+DEFAULT_EVENTS_DIR = Path("/var/lib/usbcopy/events")
 DEFAULT_MOUNTS_ROOT = Path("/mnt/usb")
 
 _VALID_MODES = ("review", "auto")

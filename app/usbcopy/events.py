@@ -1,7 +1,7 @@
 """Drive event ingestion and startup reconciliation for usbcopy.
 
 The host mount units write one JSON file per drive add/remove into a shared
-spool directory (``/run/usbcopy/events``). This module validates those files,
+spool directory (``/var/lib/usbcopy/events``). This module validates those files,
 records drive and audit rows in SQLite, and watches the spool with inotify via
 watchdog. The startup helpers are synchronous so recovery is deterministic;
 the watcher only forwards event paths and leaves threading to the caller.

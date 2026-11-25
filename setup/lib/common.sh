@@ -203,6 +203,17 @@ validate_int() {
         || die "$name must be between $min and $max (got: $value)"
 }
 
+validate_admin_password() {
+    local password=$1
+    local LC_ALL=C
+    local bytes=${#password}
+
+    [[ -n $password ]] || die "admin password must not be empty"
+    if ((bytes > 72)); then
+        die "admin password is ${bytes} UTF-8 bytes; bcrypt accepts at most 72 bytes; choose a shorter password"
+    fi
+}
+
 validate_port() {
     local value=$1
     [[ -n $value ]] || die "dashboard port must not be empty"
@@ -238,6 +249,32 @@ canonical_path() {
     [[ $canonical != *'..'* ]] || die "$name must not contain '..': $value"
     [[ $canonical != *$'\n'* && $canonical != *$'\r'* && $canonical != *$'\t'* ]] \
         || die "$name must not contain control characters"
+    printf '%s' "$canonical"
+}
+
+validate_destination_safety() {
+    local name=$1
+    local value=$2
+    local canonical=''
+
+    canonical=$(canonical_path "$name" "$value")
+    case "$canonical" in
+        / | /etc | /etc/* | /usr | /usr/* | /var | /var/* | /boot | /boot/* | \
+            /home | /home/* | /root | /root/* | /dev | /dev/* | /proc | /proc/* | \
+            /sys | /sys/* | /run | /run/* | /opt | /opt/*)
+            die "$name must not be a protected host path: $canonical"
+            ;;
+        /srv/usb-ingest | /srv/usb-ingest/*)
+            die "$name must not overlap the USB ingest root: $canonical"
+            ;;
+        /srv/usbcopy/events | /srv/usbcopy/events/*)
+            die "$name must not overlap the event spool: $canonical"
+            ;;
+    esac
+    [[ $canonical != *,* ]] || die "$name must not contain a comma: $canonical"
+    [[ $canonical != *=* ]] || die "$name must not contain '=': $canonical"
+    [[ $canonical != *[[:cntrl:]]* ]] \
+        || die "$name must not contain control characters: $canonical"
     printf '%s' "$canonical"
 }
 
@@ -296,6 +333,15 @@ destination_extra_key() {
     local key=${base,,}
     key=${key//[^a-z0-9_]/_}
     printf '%s' "$key"
+}
+
+installer_uninstall_hint() {
+    if [[ ${USBC_INSTALLER_MODE:-checkout} == bootstrap ]]; then
+        printf 'uninstall: re-run this installer with --uninstall from %s@%s (the temporary checkout is not kept)\n' \
+            "${REPO_URL:-the original repository}" "${REPO_REF:-main}"
+        return 0
+    fi
+    printf 'uninstall: %s/uninstall.sh\n' "${SCRIPT_DIR:-.}"
 }
 
 is_port_free() {
