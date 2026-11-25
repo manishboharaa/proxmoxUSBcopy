@@ -404,6 +404,20 @@ unset STUB_ARGS_FILE
 assert_fails_with 'only valid with --uninstall' "$INSTALL" --destroy-ct --dry-run
 pass "--destroy-ct without --uninstall is rejected"
 
+assert_fails_with '--update cannot be combined with --uninstall' \
+    "$INSTALL" --update --uninstall
+pass "--update with --uninstall is rejected"
+
+printf '\n== update dry-run plan ==\n'
+out=$("$INSTALL" --update --dry-run 2>&1) && status=0 || status=$?
+((status == 0)) || fail "--update --dry-run unexpectedly failed: $out"
+assert_contains 'PLAN: update: read the existing install manifest and check the CT' "$out"
+assert_contains 'PLAN: update: reinstall host scripts, udev rule, and systemd units' "$out"
+assert_contains 'PLAN: update: push the local app/ tree into /opt/usbcopy in CT ' "$out"
+assert_contains 'PLAN: update: restart usbcopy.service in CT ' "$out"
+assert_not_contains 'PLAN: create CT' "$out"
+pass "--update --dry-run prints only update plan lines"
+
 printf '\n== no tty and piped invocation ==\n'
 if command -v -- setsid >/dev/null 2>&1; then
     out=$(env -u USBC_ANSWERS setsid -w "$INSTALL" --dry-run </dev/null 2>&1) \

@@ -164,6 +164,7 @@ DRY_RUN=0
 ASSUME_YES=0
 UNINSTALL=0
 UNINSTALL_DESTROY_CT=0
+UPDATE=0
 
 # The helper files are separate shellcheck inputs; cross-file globals and
 # source resolution are expected here.
@@ -195,6 +196,8 @@ Options:
   --ref REF        Branch, tag, or commit to install (default: $REPO_REF)
   --dry-run        Run read-only preflight, prompts, and print the plan only
   --yes            Accept defaults; read answers from USBC_ANSWERS when set
+  --update         Refresh an existing install: host wiring + app files in the
+                   existing CT; config and admin password are kept
   --uninstall      Run setup/uninstall.sh instead of installing
   --destroy-ct     With --uninstall: also stop and destroy the CT
   -h, --help       Show this help
@@ -232,6 +235,10 @@ parse_args() {
                 ;;
             --uninstall)
                 UNINSTALL=1
+                shift
+                ;;
+            --update)
+                UPDATE=1
                 shift
                 ;;
             --destroy-ct)
@@ -407,6 +414,12 @@ run_stage() {
     fi
 }
 
+print_update_result() {
+    log "update complete: host wiring and app files were refreshed"
+    log "config.toml and the admin password in CT $CT_ID were kept"
+    log "dashboard http://<ct-ip>:$PORT (username admin)"
+}
+
 main() {
     local forward=()
 
@@ -414,6 +427,10 @@ main() {
 
     if ((UNINSTALL_DESTROY_CT == 1 && UNINSTALL == 0)); then
         die "--destroy-ct is only valid with --uninstall"
+    fi
+
+    if ((UPDATE == 1 && UNINSTALL == 1)); then
+        die "--update cannot be combined with --uninstall"
     fi
 
     if ((UNINSTALL == 1)); then
@@ -433,9 +450,26 @@ main() {
     fi
 
     validate_install_source
-    require_interactive_tty
     log "proxmoxUSBcopy installer"
     log "source: $REPO_URL@$REPO_REF"
+
+    if ((UPDATE == 1)); then
+        preflight_root
+        update_preflight
+        set -E
+        # shellcheck disable=SC2034
+        USBC_ERR_HANDLER=rollback_on_error
+        trap 'rollback_on_error $?' ERR
+        run_stage update_host_files
+        run_stage update_app
+        trap - ERR
+        # shellcheck disable=SC2034
+        USBC_ERR_HANDLER=''
+        print_update_result
+        return 0
+    fi
+
+    require_interactive_tty
 
     preflight_root
     preflight_commands

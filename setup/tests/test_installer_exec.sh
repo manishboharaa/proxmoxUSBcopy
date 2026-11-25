@@ -1103,4 +1103,40 @@ if grep -Eq '^pct ' "$USBC_FAKE_LOG"; then
 fi
 pass "non-dry-run uninstall requires root before touching the CT"
 
+printf '\n== update ==\n'
+reset_fixtures
+mkdir -p -- "$WORK/etc/usbcopy"
+printf '{"ct_id": 101, "version": 1}\n' >"$USBC_MANIFEST_PATH"
+export USBC_FAKE_PRESENT_PACKAGES='python3 ca-certificates'
+unset USBC_FAKE_USER_ABSENT
+PORT=8089
+: >"$USBC_FAKE_LOG"
+update_preflight
+update_host_files >"$WORK/update-host.out" 2>&1
+update_app >"$WORK/update-app.out" 2>&1
+log=$(<"$USBC_FAKE_LOG")
+assert_contains 'pct status 101' "$log" 'fake log'
+[[ -x $USBC_HOST_LIB_DIR/mount-usb.sh ]] || fail "update_host_files did not refresh mount-usb.sh"
+assert_file_contains 'Environment=USBC_CT_MOUNT_ROOT=/mnt/usb' \
+    "$USBC_SYSTEMD_DIR/usbcopy-mount@.service" 'mount unit'
+assert_contains 'pct exec 101 -- tar -xzf /tmp/usbcopy-app.tar.gz -C /opt/usbcopy' "$log" 'fake log'
+assert_contains 'pip install' "$log" 'fake log'
+assert_contains '-r /opt/usbcopy/requirements.txt' "$log" 'fake log'
+assert_contains 'systemctl restart usbcopy.service' "$log" 'fake log'
+assert_contains 'http://10.0.0.50:8089/healthz' "$log" 'fake log'
+assert_not_contains 'config.toml' "$log" 'fake log'
+assert_not_contains 'useradd' "$log" 'fake log'
+assert_not_contains 'apt-get' "$log" 'fake log'
+[[ -f $USBC_FAKE_PUSH_DIR/config.toml ]] \
+    && fail "update_app must not push a rendered config.toml"
+pass "update refreshes host wiring and app files without touching config"
+
+: >"$USBC_FAKE_LOG"
+rm -f -- "$USBC_MANIFEST_PATH"
+assert_fails_with 'no existing install found' update_preflight
+if grep -q '^pct ' "$USBC_FAKE_LOG"; then
+    fail "update preflight called pct without a manifest"
+fi
+pass "update preflight refuses to run without an install manifest"
+
 printf '\nAll installer execution tests passed.\n'

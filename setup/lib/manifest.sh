@@ -44,6 +44,36 @@ manifest_check_absent() {
     fi
 }
 
+manifest_ct_id() {
+    python3 - "$USBC_MANIFEST_PATH" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+value = payload.get("ct_id")
+print(value if value is not None else "")
+PY
+}
+
+update_preflight() {
+    if [[ ${DRY_RUN:-0} == 1 ]]; then
+        plan "update: read the existing install manifest and check the CT"
+        return 0
+    fi
+    if [[ ! -e $USBC_MANIFEST_PATH ]]; then
+        die "no existing install found at $USBC_MANIFEST_PATH; run the installer without --update first"
+    fi
+    CT_ID=$(manifest_ct_id) \
+        || die "could not read the CT id from $USBC_MANIFEST_PATH"
+    [[ $CT_ID =~ ^[0-9]+$ ]] \
+        || die "the install manifest has no usable CT id: $USBC_MANIFEST_PATH"
+    log "updating the existing installation in CT $CT_ID"
+    if ! pct status "$CT_ID" >/dev/null 2>&1; then
+        die "CT $CT_ID is not running; start it and retry --update"
+    fi
+}
+
 manifest_lines() {
     printf '%s\n' "$@"
 }

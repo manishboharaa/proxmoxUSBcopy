@@ -101,6 +101,39 @@ def test_parse_event_reads_valid_payload(tmp_path: Path):
     )
 
 
+def test_parse_event_prefers_ct_mountpoint(tmp_path: Path):
+    event = parse_event(
+        write_event(
+            tmp_path,
+            mountpoint="/srv/usb-ingest/ABCD-1234",
+            ct_mountpoint="/mnt/usb/ABCD-1234",
+        )
+    )
+
+    assert event.mountpoint == "/mnt/usb/ABCD-1234"
+    assert event.ct_mountpoint == "/mnt/usb/ABCD-1234"
+
+
+def test_parse_event_falls_back_to_host_mountpoint(tmp_path: Path):
+    event = parse_event(write_event(tmp_path, mountpoint="/srv/usb-ingest/ABCD-1234"))
+
+    assert event.mountpoint == "/srv/usb-ingest/ABCD-1234"
+    assert event.ct_mountpoint is None
+
+
+def test_parse_event_rejects_blank_ct_mountpoint(tmp_path: Path):
+    event = parse_event(
+        write_event(
+            tmp_path,
+            mountpoint="/mnt/usb/ABCD-1234",
+            ct_mountpoint="   ",
+        )
+    )
+
+    assert event.mountpoint == "/mnt/usb/ABCD-1234"
+    assert event.ct_mountpoint is None
+
+
 def test_parse_event_result_is_frozen(tmp_path: Path):
     event = parse_event(write_event(tmp_path))
 

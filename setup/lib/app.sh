@@ -310,6 +310,38 @@ sys.stdout.write(hash_password(sys.stdin.read()))'
     wait_for_usbcopy_app
 }
 
+update_app() {
+    local tmp_dir=''
+
+    if ((DRY_RUN == 1)); then
+        plan "update: push the local app/ tree into /opt/usbcopy in CT $CT_ID"
+        plan "update: pip install -r requirements.txt into the existing venv"
+        plan "update: restart usbcopy.service in CT $CT_ID and check the dashboard"
+        return 0
+    fi
+
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/usbcopy-update.XXXXXX") \
+        || die "could not create a temporary directory"
+    tar -C "$USBC_APP_SOURCE" -czf "$tmp_dir/app.tar.gz" \
+        usbcopy templates static requirements.txt config.example.toml \
+        || die "could not archive $USBC_APP_SOURCE"
+    pct push "$CT_ID" "$tmp_dir/app.tar.gz" /tmp/usbcopy-app.tar.gz \
+        || die "could not push the application archive to CT $CT_ID"
+    ct_exec tar -xzf /tmp/usbcopy-app.tar.gz -C "$APP_CT_DIR" \
+        || die "could not extract the application in CT $CT_ID"
+    ct_exec rm -f /tmp/usbcopy-app.tar.gz
+
+    ct_exec "$APP_CT_DIR/venv/bin/pip" install --disable-pip-version-check \
+        -r "$APP_CT_DIR/requirements.txt" \
+        || die "pip install failed in CT $CT_ID"
+
+    ct_exec systemctl restart usbcopy.service \
+        || die "could not restart usbcopy.service in CT $CT_ID"
+    wait_for_usbcopy_app
+    rm -rf -- "$tmp_dir"
+    log "config and admin password in CT $CT_ID were left unchanged"
+}
+
 ct_probe_write() {
     local path=$1
     local probe_script='set -eu

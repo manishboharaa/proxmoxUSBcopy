@@ -12,6 +12,9 @@ After=dev-%i.device
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# The installer bind-mounts the host mount root into the CT at /mnt/usb, so
+# events must tell the app which container path to scan.
+Environment=USBC_CT_MOUNT_ROOT=/mnt/usb
 ExecStart=/usr/local/lib/usbcopy/mount-usb.sh --device /dev/%i
 ExecStop=/usr/local/lib/usbcopy/unmount-usb.sh --device /dev/%i
 TimeoutStartSec=90

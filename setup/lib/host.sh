@@ -127,6 +127,46 @@ configure_host_propagation() {
     fi
 }
 
+install_host_assets() {
+    ensure_host_dir "$USBC_HOST_LIB_DIR" 0755
+    install_host_file "$USBC_HOST_ASSET_DIR/mount-usb.sh" \
+        "$USBC_HOST_LIB_DIR/mount-usb.sh" 0755
+    install_host_file "$USBC_HOST_ASSET_DIR/unmount-usb.sh" \
+        "$USBC_HOST_LIB_DIR/unmount-usb.sh" 0755
+    install_host_file "$USBC_HOST_ASSET_DIR/scan-usb.sh" \
+        "$USBC_HOST_LIB_DIR/scan-usb.sh" 0755
+    install -d -m 0755 "$USBC_UDEV_RULES_DIR" \
+        || die "could not create $USBC_UDEV_RULES_DIR"
+    install_host_file "$USBC_HOST_ASSET_DIR/99-usbcopy.rules" \
+        "$USBC_UDEV_RULES_DIR/99-usbcopy.rules" 0644
+    USBC_INSTALLED_UDEV+=("$USBC_UDEV_RULES_DIR/99-usbcopy.rules")
+
+    install -d -m 0755 "$USBC_SYSTEMD_DIR" \
+        || die "could not create $USBC_SYSTEMD_DIR"
+    install_host_file "$USBC_HOST_ASSET_DIR/usbcopy-mount@.service" \
+        "$USBC_SYSTEMD_DIR/usbcopy-mount@.service" 0644
+    install_host_file "$USBC_HOST_ASSET_DIR/usbcopy-scan-usb.service" \
+        "$USBC_SYSTEMD_DIR/usbcopy-scan-usb.service" 0644
+    USBC_INSTALLED_UNITS+=(
+        "$USBC_SYSTEMD_DIR/usbcopy-mount@.service"
+        "$USBC_SYSTEMD_DIR/usbcopy-scan-usb.service"
+    )
+}
+
+update_host_files() {
+    if ((DRY_RUN == 1)); then
+        plan "update: reinstall host scripts, udev rule, and systemd units"
+        plan "update: reload systemd and udev rules on the host"
+        return 0
+    fi
+    [[ -d $USBC_HOST_ASSET_DIR ]] \
+        || die "host assets are missing at $USBC_HOST_ASSET_DIR"
+    install_host_assets
+    systemctl daemon-reload || die "systemctl daemon-reload failed on the host"
+    udevadm control --reload-rules || die "udevadm control --reload-rules failed"
+    log "host scripts, udev rule, and systemd units refreshed"
+}
+
 configure_host() {
     local mapped_uid=''
     local mapped_gid=''
@@ -169,29 +209,7 @@ configure_host() {
             || die "could not chown destination root $DEST_EXTRA"
     fi
 
-    ensure_host_dir "$USBC_HOST_LIB_DIR" 0755
-    install_host_file "$USBC_HOST_ASSET_DIR/mount-usb.sh" \
-        "$USBC_HOST_LIB_DIR/mount-usb.sh" 0755
-    install_host_file "$USBC_HOST_ASSET_DIR/unmount-usb.sh" \
-        "$USBC_HOST_LIB_DIR/unmount-usb.sh" 0755
-    install_host_file "$USBC_HOST_ASSET_DIR/scan-usb.sh" \
-        "$USBC_HOST_LIB_DIR/scan-usb.sh" 0755
-    install -d -m 0755 "$USBC_UDEV_RULES_DIR" \
-        || die "could not create $USBC_UDEV_RULES_DIR"
-    install_host_file "$USBC_HOST_ASSET_DIR/99-usbcopy.rules" \
-        "$USBC_UDEV_RULES_DIR/99-usbcopy.rules" 0644
-    USBC_INSTALLED_UDEV+=("$USBC_UDEV_RULES_DIR/99-usbcopy.rules")
-
-    install -d -m 0755 "$USBC_SYSTEMD_DIR" \
-        || die "could not create $USBC_SYSTEMD_DIR"
-    install_host_file "$USBC_HOST_ASSET_DIR/usbcopy-mount@.service" \
-        "$USBC_SYSTEMD_DIR/usbcopy-mount@.service" 0644
-    install_host_file "$USBC_HOST_ASSET_DIR/usbcopy-scan-usb.service" \
-        "$USBC_SYSTEMD_DIR/usbcopy-scan-usb.service" 0644
-    USBC_INSTALLED_UNITS+=(
-        "$USBC_SYSTEMD_DIR/usbcopy-mount@.service"
-        "$USBC_SYSTEMD_DIR/usbcopy-scan-usb.service"
-    )
+    install_host_assets
 
     configure_host_propagation
 

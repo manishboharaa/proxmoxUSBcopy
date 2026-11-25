@@ -24,6 +24,8 @@ Options:
   --device PATH        Block device whose mount should be removed
   --mount-root PATH    Mount root; resolved mountpoints must be below it
                        (default: $DEFAULT_MOUNT_ROOT)
+  --ct-mount-root PATH Container-side mount root visible to the usbcopy app
+                       (default: \$USBC_CT_MOUNT_ROOT or --mount-root)
   --spool PATH         Event spool (default: $DEFAULT_SPOOL)
   --state-dir PATH     Mount state directory (default: $DEFAULT_STATE_DIR)
   --dry-run            Print the umount command and event JSON only
@@ -75,12 +77,20 @@ validate_uuid() {
 event_json() {
     local action=$1
     local timestamp=$2
+    local ct_root=${ct_mount_root:-$mount_root}
+    local ct_mountpoint
+    if [[ $ct_root == "${mount_root%/}" ]]; then
+        ct_mountpoint=$mountpoint
+    else
+        ct_mountpoint="${ct_root%/}/${mountpoint##*/}"
+    fi
     USBC_ACTION="$action" \
         USBC_UUID="$uuid" \
         USBC_LABEL="$label" \
         USBC_SERIAL="$serial" \
         USBC_DEVICE="$device" \
         USBC_MOUNTPOINT="$mountpoint" \
+        USBC_CT_MOUNTPOINT="$ct_mountpoint" \
         USBC_FS_TYPE="$fs_type" \
         USBC_TS="$timestamp" \
         python3 - <<'PY'
@@ -95,6 +105,7 @@ payload = {
     "serial": os.environ["USBC_SERIAL"] or None,
     "device": os.environ["USBC_DEVICE"],
     "mountpoint": os.environ["USBC_MOUNTPOINT"],
+    "ct_mountpoint": os.environ["USBC_CT_MOUNTPOINT"],
     "fs_type": os.environ["USBC_FS_TYPE"],
     "ts": os.environ["USBC_TS"],
 }
@@ -159,6 +170,7 @@ main() {
     local mountpoint=''
     local device_arg=''
     local mount_root=$DEFAULT_MOUNT_ROOT
+    local ct_mount_root=${USBC_CT_MOUNT_ROOT:-}
     local spool=$DEFAULT_SPOOL
     local state_dir=$DEFAULT_STATE_DIR
     local dry_run=0
@@ -199,6 +211,11 @@ main() {
                 mount_root=$2
                 shift 2
                 ;;
+            --ct-mount-root)
+                (($# >= 2)) || die "--ct-mount-root requires a value"
+                ct_mount_root=$2
+                shift 2
+                ;;
             --spool)
                 (($# >= 2)) || die "--spool requires a value"
                 spool=$2
@@ -224,6 +241,9 @@ main() {
     done
 
     validate_absolute_path "$mount_root" "--mount-root"
+    if [[ -n $ct_mount_root ]]; then
+        validate_absolute_path "$ct_mount_root" "--ct-mount-root"
+    fi
     validate_absolute_path "$spool" "--spool"
     validate_absolute_path "$state_dir" "--state-dir"
     require_command python3

@@ -53,7 +53,7 @@ import sys
 payload = json.load(sys.stdin)
 expected_keys = {
     "version", "action", "uuid", "label", "serial",
-    "device", "mountpoint", "fs_type", "ts",
+    "device", "mountpoint", "ct_mountpoint", "fs_type", "ts",
 }
 assert set(payload) == expected_keys, payload
 assert payload["version"] == 1, payload
@@ -62,6 +62,9 @@ assert payload["uuid"] == sys.argv[2], payload
 for key in ("device", "mountpoint", "fs_type", "ts"):
     value = payload[key]
     assert isinstance(value, str) and value, (key, payload)
+for key in ("ct_mountpoint",):
+    value = payload[key]
+    assert value is None or (isinstance(value, str) and value), (key, payload)
 for key in ("label", "serial"):
     value = payload[key]
     assert value is None or isinstance(value, str), (key, payload)
@@ -259,6 +262,23 @@ assert_app_parses_event "$json"
 [[ ! -e "$mnt_root" ]] || fail "dry-run created the mount root"
 [[ ! -e "$spool" ]] || fail "dry-run created the spool"
 pass "exfat dry-run prints read-only mount command and valid add event"
+
+out=$("$MOUNT" --device /dev/fake1 --uuid TEST-1234 --fs-type exfat \
+    --label MEDIA --serial SN1 --mount-root "$mnt_root" \
+    --ct-mount-root /mnt/usb --spool "$spool" --dry-run)
+json=$(json_last "$out")
+assert_field "$json" mountpoint "$mnt_root/TEST-1234"
+assert_field "$json" ct_mountpoint "/mnt/usb/TEST-1234"
+assert_app_parses_event "$json"
+pass "ct-mount-root maps the event mountpoint into the container path"
+
+out=$("$MOUNT" --device /dev/fake1 --uuid TEST-1234 --fs-type exfat \
+    --label MEDIA --serial SN1 --mount-root "$mnt_root" \
+    --spool "$spool" --dry-run)
+json=$(json_last "$out")
+assert_field "$json" mountpoint "$mnt_root/TEST-1234"
+assert_field "$json" ct_mountpoint "$mnt_root/TEST-1234"
+pass "without ct-mount-root the event mountpoint stays the host path"
 
 out=$("$MOUNT" --device /dev/fake2 --uuid TEST-EXT4 --fs-type ext4 \
     --mount-root "$mnt_root" --spool "$spool" --dry-run)

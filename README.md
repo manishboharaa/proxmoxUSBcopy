@@ -175,6 +175,11 @@ the uninstall command.
 - `--ref REF` selects the branch, tag, or commit for a piped bootstrap (default
   `main`). It does nothing when you run the installer from the repo folder.
 - `--uninstall` runs `setup/uninstall.sh` instead of installing.
+- `--update` refreshes an existing install: it reinstalls the host scripts,
+  udev rule, and systemd units, then pushes the newest app files into the
+  existing CT and restarts the dashboard. `config.toml`, the admin password,
+  and all stored data are kept. Example:
+  `curl -fsSL https://raw.githubusercontent.com/manishboharaa/proxmoxUSBcopy/main/setup/install.sh | bash -s -- --update`
 - `--destroy-ct` with `--uninstall` also destroys the container.
 - `--help` prints the options.
 

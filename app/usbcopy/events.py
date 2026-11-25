@@ -52,6 +52,13 @@ class EventError(ValueError):
 
 @dataclass(frozen=True)
 class DriveEvent:
+    """One processed host event.
+
+    ``mountpoint`` is the path visible inside the CT (the host's
+    ``ct_mountpoint`` when provided, else the host mount path);
+    ``ct_mountpoint`` keeps the raw value for diagnostics.
+    """
+
     action: Literal["add", "remove"]
     uuid: str
     label: str | None
@@ -60,6 +67,7 @@ class DriveEvent:
     mountpoint: str
     fs_type: str
     ts: str
+    ct_mountpoint: str | None = None
 
 
 def _is_valid_uuid(value: object) -> bool:
@@ -79,7 +87,7 @@ def _require_text(payload: dict[str, object], key: str) -> str:
 
 
 def _optional_text(payload: dict[str, object], key: str) -> str | None:
-    value = payload[key]
+    value = payload.get(key)
     if value is not None and not isinstance(value, str):
         raise EventError(f"event field {key!r} must be a string or null")
     return value
@@ -92,6 +100,10 @@ def parse_event(path: Path) -> DriveEvent:
     wrongly typed fields, an unsupported ``version``, and unsafe UUIDs.
     Unknown extra keys are ignored so a newer host can add fields without
     breaking an older app.
+
+    ``mountpoint`` resolves to the path visible inside the CT: the event's
+    ``ct_mountpoint`` when present and non-blank, otherwise the host
+    ``mountpoint`` written by an older host script.
     """
     path = Path(path)
     try:
@@ -127,6 +139,9 @@ def parse_event(path: Path) -> DriveEvent:
 
     label = _optional_text(payload, "label")
     serial = _optional_text(payload, "serial")
+    ct_mountpoint = _optional_text(payload, "ct_mountpoint")
+    if ct_mountpoint is not None:
+        ct_mountpoint = ct_mountpoint.strip() or None
 
     return DriveEvent(
         action=action,
@@ -134,9 +149,10 @@ def parse_event(path: Path) -> DriveEvent:
         label=label,
         serial=serial,
         device=_require_text(payload, "device"),
-        mountpoint=_require_text(payload, "mountpoint"),
+        mountpoint=ct_mountpoint or _require_text(payload, "mountpoint"),
         fs_type=_require_text(payload, "fs_type"),
         ts=_require_text(payload, "ts"),
+        ct_mountpoint=ct_mountpoint,
     )
 
 
