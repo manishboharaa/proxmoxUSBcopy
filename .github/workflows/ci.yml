@@ -1,0 +1,22 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r app/requirements-dev.txt
+      - run: cd app && pytest -q && ruff check .
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: shellcheck setup/*.sh setup/lib/*.sh setup/host/*.sh setup/tests/*.sh setup/tests/fakes/*
+      - run: bash -n setup/*.sh setup/lib/*.sh setup/host/*.sh setup/tests/*.sh setup/tests/fakes/*
