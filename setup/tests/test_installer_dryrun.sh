@@ -147,20 +147,21 @@ pass "--yes without answers uses defaults and fails fast on the required destina
 printf '\n== flags ==\n'
 out=$(USBC_ANSWERS="$ANSWERS" "$INSTALL" --dry-run --yes \
     --repo-url https://example.test/usbcopy.git --ref v1.2.3 2>&1)
-assert_contains 'PLAN: fetch https://example.test/usbcopy.git@v1.2.3' "$out"
+assert_contains 'PLAN: copy the local application tree' "$out"
+assert_contains 'Install source:   https://example.test/usbcopy.git@v1.2.3' "$out"
 pass "--repo-url and --ref override the placeholders"
 
 out=$(USBC_ANSWERS="$ANSWERS" "$INSTALL" --dry-run --yes \
     --repo-url=https://example.test/equals.git --ref=dev 2>&1)
-assert_contains 'PLAN: fetch https://example.test/equals.git@dev' "$out"
+assert_contains 'Install source:   https://example.test/equals.git@dev' "$out"
 pass "--repo-url= and --ref= forms are accepted"
 
 out=$(USBC_ANSWERS="$ANSWERS" "$INSTALL" --dry-run --yes \
     --repo-url=ssh://git@example.test/usbcopy.git 2>&1)
-assert_contains 'PLAN: fetch ssh://git@example.test/usbcopy.git@main' "$out"
+assert_contains 'Install source:   ssh://git@example.test/usbcopy.git@main' "$out"
 out=$(USBC_ANSWERS="$ANSWERS" "$INSTALL" --dry-run --yes \
     --repo-url=git@example.test:owner/usbcopy.git 2>&1)
-assert_contains 'PLAN: fetch git@example.test:owner/usbcopy.git@main' "$out"
+assert_contains 'Install source:   git@example.test:owner/usbcopy.git@main' "$out"
 pass "ssh://user@ and git@host:path repository URLs are accepted"
 
 out=$("$INSTALL" --help 2>&1)

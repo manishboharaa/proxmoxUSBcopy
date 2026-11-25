@@ -298,9 +298,6 @@ validate_install_source() {
         || die "--ref contains unsupported characters"
     [[ $REPO_REF != *'..'* ]] || die "--ref must not contain '..'"
     [[ $REPO_REF != -* ]] || die "--ref must not start with '-'"
-    if [[ $REPO_URL == *'/OWNER/'* ]]; then
-        warn "REPO_URL still contains the OWNER placeholder; pass --repo-url before a real install"
-    fi
 }
 
 print_install_result() {
@@ -343,7 +340,11 @@ print_plan() {
     plan "install CT packages only if missing: python3 python3-venv python3-pip ca-certificates curl"
     plan "create system user usbcopy in CT $CT_ID"
     plan "create Python venv at /opt/usbcopy/venv in CT $CT_ID"
-    plan "fetch $REPO_URL@$REPO_REF and install pinned Python requirements in CT $CT_ID"
+    if [[ ${USBC_INSTALLER_MODE:-checkout} == bootstrap ]]; then
+        plan "fetch $REPO_URL@$REPO_REF and install pinned Python requirements in CT $CT_ID"
+    else
+        plan "copy the local application tree and install pinned Python requirements in CT $CT_ID"
+    fi
     plan "copy application files to /opt/usbcopy in CT $CT_ID"
     plan "write /etc/usbcopy/config.toml in CT $CT_ID (port $PORT, default mode review, auto $AUTO_MODE)"
     plan "install and enable usbcopy.service in CT $CT_ID"

@@ -379,6 +379,44 @@ confirmation.
 - For a piped install, re-run the installer with `--uninstall`; the temporary
   checkout is deleted after the install, so there is no local script to call.
 
+## Manual Proxmox smoke checklist
+
+These checks need a real Proxmox VE 8 host and a throwaway USB drive. They are
+not automated in this repository; run them before relying on a new release.
+
+1. **Fresh install:** on a host with an LXC template storage, run the checkout
+   installer on a spare CT ID. It creates an unprivileged, on-boot Debian 12
+   CT, starts the dashboard, and prints a save-now admin password.
+2. **LAN dashboard:** open `http://<host-ip>:<port>` from another machine,
+   log in, and confirm Overview, Import, Runs, Drives, and About render.
+3. **exFAT drive:** plug in a drive. It appears in Review within a few seconds.
+   Select a movie folder, start the import, and confirm the files appear under
+   Movies with the same names and structure and the run detail shows hashes.
+4. **NTFS drive:** repeat with an NTFS drive. The host mounts it read-only; the
+   copy succeeds and no source file is changed.
+5. **Source is read-only:** from the host, `touch /srv/usb-ingest/<uuid>/test`
+   must fail with a read-only filesystem error. From the CT,
+   `pct exec <ct-id> -- touch /mnt/usb/<uuid>/test` must also fail.
+6. **Remove/reinsert:** remove the drive after a run. The drive shows “not
+   present”, history remains, and the host mount is released. Reinsert it and
+   confirm a new event is detected without rebooting.
+7. **Reboot:** reboot the host with the CT set to on-boot. The dashboard,
+   host units, and drive detection come back; a plugged-in drive is visible.
+8. **Permission warning:** point a destination at a directory the mapped
+   `usbcopy` user cannot write to and confirm the installer reports the
+   verification failure without changing source or destination contents.
+9. **Auto mode:** enable Auto mode for a source folder, plug in a drive, and
+   confirm the run starts without opening Import.
+10. **Port fallback:** occupy the requested port inside the CT and reinstall;
+    the installer chooses the next free port and prints the updated URL.
+11. **Uninstall/reinstall:** run `uninstall.sh --dry-run`, then
+    `uninstall.sh --yes` and confirm the CT and destination files remain. Run
+    `uninstall.sh --yes --destroy-ct` on a second install and confirm the CT is
+    gone. Reinstall afterward.
+12. **Rollback:** force a failure (for example, stop `pct` mid-install) and
+    accept the rollback prompt; confirm the CT created by that run and the host
+    wiring are removed and destination data is kept.
+
 ## Log locations
 
 There are no separate log files by default; everything goes to journald.

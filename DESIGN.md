@@ -233,7 +233,7 @@ Prompt list (defaults in brackets):
 6. Movies destination folder on host (must be local path) [none — required]
 7. Series destination folder on host [none — required]
 8. Optional extra destination (e.g. Other) [skip]
-9. Default source folder on the drive, used by Auto mode and as the Review starting point [blank = browse whole drive]
+9. Default source folder on the drive, used by Auto mode [blank = copy the whole drive in Auto mode]
 10. Enable Auto mode for that folder? [No]
 11. Dashboard port [8088]; the installer checks the port is free in the CT and re-prompts (or offers the next free port) if it is already in use
 12. Admin password [generate and print once]
@@ -313,7 +313,7 @@ Indexes on run status, drive presence, inventory entries by parent, run_items by
 
 ## 14. Review / inventory behaviour
 
-- Review scans the drive root by default; the configured source folder is the initial view if set. The user can navigate the whole drive tree.
+- Review always scans and opens at the drive root; the configured source folder is used only to start an Auto-mode run. The user can navigate the whole drive tree.
 - Selecting a folder means "copy what is inside it". Its own name is not added again under the destination, so selecting `Movies/` does not produce `movies/Movies/`.
 - Skip system folders: `System Volume Information`, `$RECYCLE.BIN`, `.Trashes`, `lost+found`, `.Spotlight-V100`, `.fseventsd`, and hidden dot-directories at the root (shown only with an "show hidden" toggle? v1: skipped silently and listed in run notes).
 - Media hints only: video extensions (`mkv, mp4, m4v, avi, mov, wmv, webm, ts, m2ts, mpg, mpeg, flv, 3gp`) plus TV regex (`S01E02`, `Season 1`, `1x02`) → "series" hint; other videos → "movie" hint; non-video → "other". Hints never change what is copied.
@@ -357,7 +357,7 @@ username = "admin"
 password_hash = "..."
 
 [source]
-# Empty means "browse the whole drive" in Review mode.
+# Empty means "copy the whole drive" in Auto mode. Review always opens at the root.
 default_folder = ""
 
 [mode]
@@ -406,6 +406,6 @@ skip_hidden_root_dirs = true
 2. GitHub owner/repo URL: **Manish will provide later**; the installer uses one `REPO_URL` variable with a placeholder until then.
 3. CT defaults: 2 vCPU / 1 GB RAM / 8 GB disk / DHCP. **Confirmed.**
 4. Optional "Other" destination profile: **not included**; Movies and Series only in v1.
-5. Default source folder: **blank = browse the whole drive** in Review mode. **Confirmed.**
+5. Default source folder: **blank = copy the whole drive** in Auto mode; Review always opens at the drive root. **Resolved 2026-11-25 to match the approved plan/implementation.**
 6. Existing files: **skip conflicts, never overwrite in v1.** **Confirmed.**
 7. Dashboard port: user-selectable at install, default 8088; installer checks availability and re-prompts/offers the next free port if taken. **Confirmed.**

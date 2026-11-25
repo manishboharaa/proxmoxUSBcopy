@@ -150,7 +150,7 @@ prompt_extra_destination() {
 }
 
 prompt_source_folder() {
-    ask SOURCE_FOLDER "Default source folder on the drive (blank = browse whole drive)" ""
+    ask SOURCE_FOLDER "Default source folder for Auto mode (blank = copy the whole drive)" ""
     if [[ -n $SOURCE_FOLDER ]]; then
         [[ $SOURCE_FOLDER != *'..'* ]] \
             || die "default source folder must not contain '..': $SOURCE_FOLDER"
@@ -236,7 +236,7 @@ print_summary() {
     local password_display='********'
     local auto_display='disabled'
     local extra_display='(none)'
-    local source_display='(blank = browse whole drive)'
+    local source_display='(blank = whole drive in Auto mode)'
     local network
 
     if ((ADMIN_PASSWORD_GENERATED == 1)); then
