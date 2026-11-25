@@ -812,7 +812,7 @@ def test_about_shows_version_and_paths(config, monkeypatch):
     with TestClient(create_app(about_config, start_background=False)) as about_client:
         assert post_form_login(about_client).status_code == 303
         html = about_client.get("/about").text
-    assert "0.1.0" in html and "/data/movies" in html
+    assert "1.1.0" in html and "/data/movies" in html
     assert "/data/series" in html
     assert "/etc/usbcopy/config.toml" in html
 

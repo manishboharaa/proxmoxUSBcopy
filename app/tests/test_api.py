@@ -281,7 +281,7 @@ def test_status_after_login(client: TestClient, login: SimpleNamespace):
     response = client.get("/api/status")
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == "0.1.0"
+    assert body["version"] == "1.1.0"
     assert body["mode"] == "review"
     assert body["auto_enabled"] is False
     assert body["drives_present"] == 0
@@ -618,3 +618,33 @@ def test_cancel_endpoint_requires_csrf(client: TestClient, conn):
     response = client.post(f"/api/runs/{run_id}/cancel", json={"csrf": "nope"})
 
     assert response.status_code == 403
+
+
+def test_update_check_endpoint_reports_status(client: TestClient, monkeypatch):
+    from usbcopy import update_check as update_module
+
+    update_module.reset_cache()
+    monkeypatch.setattr(
+        update_module,
+        "fetch_remote_version",
+        lambda repo, branch: "9.9.9",
+    )
+    post_login(client)
+
+    response = client.get("/api/update/check")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["update_available"] is True
+    assert body["current_version"] == "1.1.0"
+    assert body["latest_version"] == "9.9.9"
+    update_module.reset_cache()
+
+
+def test_update_check_endpoint_requires_login(config, tmp_path):
+    app_instance = create_app(config, start_background=False)
+    client = TestClient(app_instance)
+
+    response = client.get("/api/update/check")
+
+    assert response.status_code in (401, 303)

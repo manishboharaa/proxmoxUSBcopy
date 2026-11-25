@@ -132,6 +132,13 @@
 {% endblock %}
 
 <main class="page" id="main" tabindex="-1">
+<div class="update-banner" id="update-banner" role="status" hidden>
+  <span class="update-banner-text" id="update-banner-text"></span>
+  <span class="update-banner-actions">
+    <button class="btn btn-quiet" id="update-copy" type="button">Copy update command</button>
+    <button class="btn btn-quiet" id="update-dismiss" type="button">Dismiss</button>
+  </span>
+</div>
 {% block content %}{% endblock %}
 
 {% block footer %}
@@ -142,6 +149,7 @@
 {% endblock %}
 
 {% block scripts %}{% endblock %}
+<script src="/static/js/update.js" defer></script>
 </main>
 </body>
 </html>

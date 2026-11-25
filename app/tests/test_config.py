@@ -251,3 +251,31 @@ def test_set_password_hash_requires_an_existing_hash_line(tmp_path):
 
     with pytest.raises(ConfigError, match="password_hash"):
         set_password_hash(config_path, "$2b$12$" + "c" * 53)
+
+
+def test_update_settings_default_when_table_missing(tmp_path):
+    path = write_config(tmp_path)
+
+    config = load_config(path)
+
+    assert config.update_repo == "manishboharaa/proxmoxUSBcopy"
+    assert config.update_branch == "main"
+    assert config.update_check_interval_hours == 6
+    assert config.update_enabled is True
+
+
+def test_update_settings_parse_from_toml(tmp_path):
+    path = write_config(tmp_path)
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + '\n[update]\nrepo = "someone/else"\nbranch = "dev"\n'
+        "check_interval_hours = 12\nenabled = false\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.update_repo == "someone/else"
+    assert config.update_branch == "dev"
+    assert config.update_check_interval_hours == 12
+    assert config.update_enabled is False

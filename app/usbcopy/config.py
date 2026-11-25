@@ -16,6 +16,9 @@ from typing import Any, Literal
 DEFAULT_DB_PATH = Path("/var/lib/usbcopy/usbcopy.db")
 DEFAULT_EVENTS_DIR = Path("/var/lib/usbcopy/events")
 DEFAULT_MOUNTS_ROOT = Path("/mnt/usb")
+DEFAULT_UPDATE_REPO = "manishboharaa/proxmoxUSBcopy"
+DEFAULT_UPDATE_BRANCH = "main"
+DEFAULT_UPDATE_CHECK_HOURS = 6
 
 _VALID_MODES = ("review", "auto")
 _REQUIRED_DESTINATIONS = ("movies", "series")
@@ -52,6 +55,10 @@ class Config:
     reconcile_minutes: int
     skip_hidden_root_dirs: bool
     config_path: Path | None = None
+    update_repo: str = DEFAULT_UPDATE_REPO
+    update_branch: str = DEFAULT_UPDATE_BRANCH
+    update_check_interval_hours: int = DEFAULT_UPDATE_CHECK_HOURS
+    update_enabled: bool = True
 
 
 def load_config(path: Path) -> Config:
@@ -129,6 +136,20 @@ def load_config(path: Path) -> Config:
     events_dir = _optional_path(paths, "events_dir", DEFAULT_EVENTS_DIR)
     mounts_root = _optional_path(paths, "mounts_root", DEFAULT_MOUNTS_ROOT)
 
+    update = _table(data, "update")
+    update_repo = _optional_str(
+        update, "repo", DEFAULT_UPDATE_REPO, "update.repo"
+    )
+    update_branch = _optional_str(
+        update, "branch", DEFAULT_UPDATE_BRANCH, "update.branch"
+    )
+    update_hours = _optional_int(
+        update, "check_interval_hours", DEFAULT_UPDATE_CHECK_HOURS, "update.check_interval_hours"
+    )
+    update_enabled = _optional_bool(
+        update, "enabled", True, "update.enabled"
+    )
+
     return Config(
         port=port,
         username=username,
@@ -149,6 +170,10 @@ def load_config(path: Path) -> Config:
         reconcile_minutes=reconcile_minutes,
         skip_hidden_root_dirs=skip_hidden_root_dirs,
         config_path=Path(path),
+        update_repo=update_repo,
+        update_branch=update_branch,
+        update_check_interval_hours=update_hours,
+        update_enabled=update_enabled,
     )
 
 
@@ -255,3 +280,36 @@ def set_password_hash(path: Path, new_hash: str) -> None:
     except OSError as exc:
         tmp_path.unlink(missing_ok=True)
         raise ConfigError(f"cannot write config file {path}: {exc}") from exc
+
+
+def _optional_str(
+    table: dict[str, Any], key: str, default: str, field: str
+) -> str:
+    if key not in table:
+        return default
+    value = table[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"{field} must be a non-empty string")
+    return value
+
+
+def _optional_int(
+    table: dict[str, Any], key: str, default: int, field: str
+) -> int:
+    if key not in table:
+        return default
+    value = table[key]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ConfigError(f"{field} must be a non-negative integer")
+    return value
+
+
+def _optional_bool(
+    table: dict[str, Any], key: str, default: bool, field: str
+) -> bool:
+    if key not in table:
+        return default
+    value = table[key]
+    if not isinstance(value, bool):
+        raise ConfigError(f"{field} must be true or false")
+    return value

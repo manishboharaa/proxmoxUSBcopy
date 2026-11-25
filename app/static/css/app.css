@@ -2131,3 +2131,31 @@ h1 {
   font-size: var(--text-12);
   line-height: 17px;
 }
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-5);
+  padding: 10px 14px;
+  border: 1px solid var(--blue);
+  border-radius: var(--r-control);
+  background: var(--blue-soft);
+  font-size: var(--text-13);
+}
+
+.update-banner[hidden] {
+  display: none;
+}
+
+.update-banner-text {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.update-banner-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}

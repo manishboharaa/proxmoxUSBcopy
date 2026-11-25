@@ -36,6 +36,7 @@ from usbcopy.config import Config, ConfigError, Destination, set_password_hash
 from usbcopy.db import open_db
 from usbcopy.planner import PlanError, RunPlan, build_run_plan, required_free_bytes
 from usbcopy.runs import create_run
+from usbcopy.update_check import check_for_update
 from usbcopy.web import (
     build_require_session,
     clear_session_cookie,
@@ -521,6 +522,11 @@ def build_api_router(
         )
         conn.commit()
         return {"status": "cancelled"}
+
+    @protected.get("/update/check")
+    def update_check() -> dict:
+        """Cached GitHub version check; fails quiet behind the session."""
+        return check_for_update(config)
 
     router.include_router(protected)
     return router

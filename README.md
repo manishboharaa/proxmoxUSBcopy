@@ -282,6 +282,17 @@ About page shows the loaded paths and log commands. If you change the config,
 restart the app and keep the file private because it contains the password hash
 and session secret.
 
+### Update notifications
+
+The dashboard checks the GitHub repository for a newer version every 6 hours
+(configurable under `[update]` in `config.toml`; the check only reads a small
+`VERSION` file and fails quietly when offline). When an update exists, a banner
+appears at the top of every page with the installed and latest versions and a
+**Copy update command** button. The dashboard runs inside the unprivileged CT,
+so it cannot update itself: the button copies the one-line installer command
+(`curl … | bash -s -- --update`) and you paste it into the Proxmox host shell.
+The update keeps your config, password, and data.
+
 ## Safety
 
 - The source is mounted read-only at the host level with

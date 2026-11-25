@@ -35,6 +35,14 @@ path = "/data/series"
 reconcile_minutes = 0     # 0 = off
 skip_hidden_root_dirs = true
 
+[update]
+# Where the dashboard looks for a newer version (once per interval, fails
+# quiet). The banner shows the exact command to run on the Proxmox host.
+repo = "manishboharaa/proxmoxUSBcopy"
+branch = "main"
+check_interval_hours = 6
+enabled = true
+
 # Optional application path overrides (defaults shown). The installer uses
 # the defaults; override only for development or non-standard layouts.
 # [paths]
