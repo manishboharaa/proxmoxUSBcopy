@@ -922,3 +922,8 @@ def test_runs_page_cancel_button_only_for_active_runs(client, login, conn):
     assert "runs-cancel" in html
     assert f'data-run-id="{running_id}"' in html
     assert f'data-run-id="{done_id}"' not in html
+
+
+def test_account_panel_is_spanned_in_page_grid(client, login):
+    html = client.get("/account").text
+    assert 'class="panel account-panel"' in html
