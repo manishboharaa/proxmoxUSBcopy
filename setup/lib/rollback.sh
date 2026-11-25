@@ -686,7 +686,8 @@ rb_print_remaining() {
     if [[ -n ${RB_CT_ID:-} ]]; then
         log "kept CT $RB_CT_ID"
     fi
-    for item in "${RB_HOST_UNITS[@]}" "${RB_HOST_FILES[@]}" "${RB_UDEV[@]}"; do
+    for item in "${RB_HOST_UNITS[@]}" "${RB_HOST_FILES[@]}" "${RB_UDEV[@]}" \
+        "${RB_HOST_DIRS[@]}" "${RB_BACKUPS[@]}"; do
         [[ -n $item ]] && log "kept $item"
     done
     for item in "${RB_MOUNTS[@]}"; do
