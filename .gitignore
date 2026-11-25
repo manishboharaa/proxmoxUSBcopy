@@ -8,4 +8,6 @@ __pycache__/
 worktrees/
 memory.md
 SESSION.md
+PLAN.md
+DESIGN.md
 *.log
