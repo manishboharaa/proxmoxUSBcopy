@@ -231,7 +231,8 @@ fi
 pass "the 72-byte password cap is enforced before the plan and CT creation"
 
 assert_fails_with 'no install manifest found' \
-    env USBC_MANIFEST_PATH="$WORK/missing-manifest.json" "$INSTALL" --uninstall
+    env USBC_TEST_MODE=1 USBC_FAIL_AT=unused USBC_MANIFEST_PATH="$WORK/missing-manifest.json" \
+    "$INSTALL" --uninstall
 pass "--uninstall fails clearly when no install manifest exists"
 
 printf '\n== destination canonicalisation ==\n'

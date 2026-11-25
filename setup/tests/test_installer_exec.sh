@@ -132,6 +132,7 @@ reset_fixtures() {
     USBC_CONTAINER_UNITS=()
     USBC_INSTALLED_UDEV=()
     USBC_BACKUP_FILES=()
+    USBC_BACKUP_TARGETS=()
     USBC_MOUNTS=()
     USBC_HOST_MOUNTS=()
     USBC_RO_FALLBACK_MOUNTS=()
@@ -144,6 +145,20 @@ reset_fixtures() {
     : >"$USBC_FAKE_LOG"
     rm -rf -- "${WORK:?}/media" "${WORK:?}/srv" "${WORK:?}/usr" "${WORK:?}/etc" "${WORK:?}/pushed" "${WORK:?}/fake-state"
 }
+
+write_fake_pct_config() {
+    local file=$1
+    local hostname=${2:-usbcopy}
+    {
+        printf 'hostname: %s\n' "$hostname"
+        printf 'mp0: %s,mp=/mnt/usb,ro=1\n' "$USBC_USB_INGEST_DIR"
+        printf 'mp1: %s,mp=/var/lib/usbcopy/events\n' "$USBC_SPOOL_DIR"
+        printf 'mp2: %s,mp=/data/movies\n' "$WORK/media/movies"
+        printf 'mp3: %s,mp=/data/series\n' "$WORK/media/series"
+    } >"$file"
+}
+
+export USBC_FAKE_PCT_CONFIG="$WORK/fake-pct-config"
 
 printf '== static checks ==\n'
 for script in "$INSTALL" "$LIB_DIR"/*.sh "$REPO_ROOT"/setup/tests/fakes/*; do
@@ -379,6 +394,12 @@ assert_not_contains 'chown' "$(<"$USBC_FAKE_LOG")" 'fake log'
 assert_not_contains 'pct exec' "$(<"$USBC_FAKE_LOG")" 'fake log'
 pass "configure_host repeats the protected-path check before any CT or chown call"
 
+reset_fixtures
+configure_host >/dev/null 2>&1
+[[ " ${USBC_CREATED_DIRS[*]} " == *" $USBC_HOST_LIB_DIR "* ]] \
+    || fail "configure_host did not record $USBC_HOST_LIB_DIR as created"
+pass "configure_host records /usr/local/lib/usbcopy as a created directory"
+
 printf '\n== verify_permissions ==\n'
 reset_fixtures
 export USBC_FAKE_USB_ENTRY=''
@@ -440,6 +461,7 @@ USBC_INSTALLED_UNITS=("$USBC_SYSTEMD_DIR/usbcopy-mount@.service")
 USBC_CONTAINER_UNITS=('usbcopy.service')
 USBC_INSTALLED_UDEV=("$USBC_UDEV_RULES_DIR/99-usbcopy.rules")
 USBC_BACKUP_FILES=("$USBC_BACKUP_ROOT/stamp/usr/local/lib/usbcopy/mount-usb.sh")
+USBC_BACKUP_TARGETS=("$USBC_HOST_LIB_DIR/mount-usb.sh"$'\t'"${USBC_BACKUP_FILES[0]}")
 USBC_HOST_MOUNTS=("$USBC_USB_INGEST_DIR"$'\t'self-bind$'\t'true$'\t'private$'\t'shared)
 USBC_INSTALLER_MODE=checkout
 SCRIPT_DIR="$REPO_ROOT/setup"
@@ -504,6 +526,11 @@ assert "/etc/systemd/system/usbcopy.service" in data["files"], data["files"]
 assert data["units"], data
 assert data["udev"], data
 assert data["backups"], data
+assert data["backup_root"] == os.environ["USBC_BACKUP_ROOT"], data
+assert data["backup_targets"] == [{
+    "target": "%s/mount-usb.sh" % os.environ["USBC_HOST_LIB_DIR"],
+    "backup": os.environ["USBC_BACKUP_ROOT"] + "/stamp/usr/local/lib/usbcopy/mount-usb.sh",
+}], data
 assert data["installed_at"].endswith("Z"), data
 PY
 pass "write_manifest emits the required install metadata with escaped JSON"
@@ -567,6 +594,7 @@ pass "piped install fails clearly when the archive cannot be fetched"
 printf '\n== automatic rollback ==\n'
 reset_fixtures
 mkdir -p -- "$USBC_HOST_LIB_DIR" "$WORK/media"
+write_fake_pct_config "$USBC_FAKE_PCT_CONFIG"
 printf 'OLD HOST SCRIPT\n' >"$USBC_HOST_LIB_DIR/mount-usb.sh"
 ROLLBACK_ANSWERS="101 usbcopy local-lvm 8 1024 2 dhcp $WORK/media/movies $WORK/media/series '' '' no 8088 secret123"
 out=$(USBC_ANSWERS="$ROLLBACK_ANSWERS" USBC_TEST_MODE=1 FAKE_FAIL_AT=configure_host \
@@ -592,6 +620,7 @@ pass "rollback removes host wiring, restores backups, and destroys only the CT c
 
 reset_fixtures
 mkdir -p -- "$WORK/media"
+write_fake_pct_config "$USBC_FAKE_PCT_CONFIG"
 out=$(USBC_ANSWERS="$ROLLBACK_ANSWERS" USBC_TEST_MODE=1 FAKE_FAIL_AT=write_manifest \
     "$INSTALL" --yes 2>&1) && status=0 || status=$?
 ((status != 0)) || fail "installer with a simulated write_manifest failure unexpectedly succeeded"
@@ -602,6 +631,19 @@ pass "rollback removes a manifest written by the failing stage"
 
 reset_fixtures
 mkdir -p -- "$WORK/media"
+write_fake_pct_config "$USBC_FAKE_PCT_CONFIG"
+export USBC_FAKE_UMOUNT_FAIL=1
+out=$(USBC_ANSWERS="$ROLLBACK_ANSWERS" USBC_TEST_MODE=1 FAKE_FAIL_AT=write_manifest \
+    "$INSTALL" --yes 2>&1) && status=0 || status=$?
+unset USBC_FAKE_UMOUNT_FAIL
+((status != 0)) || fail "rollback with a cleanup failure unexpectedly succeeded"
+assert_contains 'keeping install manifest' "$out" 'rollback cleanup failure output'
+[[ -f $USBC_MANIFEST_PATH ]] || fail "rollback with a cleanup failure removed the manifest"
+pass "a rollback cleanup failure keeps the manifest for recovery"
+
+reset_fixtures
+mkdir -p -- "$WORK/media"
+write_fake_pct_config "$USBC_FAKE_PCT_CONFIG"
 out=$(USBC_ANSWERS="$ROLLBACK_ANSWERS" USBC_TEST_MODE=1 USBC_FAIL_AT=unused USBC_FAKE_ID_FAIL=1 \
     "$INSTALL" --yes 2>&1) && status=0 || status=$?
 ((status != 0)) || fail "installer with a failing mapped-ID lookup unexpectedly succeeded"
@@ -614,6 +656,7 @@ pass "a real die failure triggers exactly one rollback"
 
 : >"$USBC_FAKE_LOG"
 RB_CT_ID=101
+RB_CT_HOSTNAME=usbcopy
 RB_CT_CREATED=0
 RB_HOST_FILES=()
 RB_CONTAINER_FILES=()
@@ -624,13 +667,19 @@ RB_HOST_UNITS=()
 RB_CONTAINER_UNITS=()
 RB_UDEV=()
 RB_BACKUPS=()
+RB_BACKUP_TARGETS=()
+RB_BACKUP_ROOT=''
 RB_MOUNTS=()
 RB_HOST_MOUNTS=()
 RB_DEST_HOSTS=()
+RB_DEST_CT_PATHS=()
+RB_INCOMPLETE=()
 RB_FAILURES=0
+unset USBC_FAKE_PCT_CONFIG
 export USBC_FAKE_CT_STOPPED=1
 out=$(rb_execute_rollback 2>&1)
 unset USBC_FAKE_CT_STOPPED
+export USBC_FAKE_PCT_CONFIG="$WORK/fake-pct-config"
 assert_contains 'was not created by this run' "$out" 'rollback output'
 assert_not_contains 'pct destroy' "$(<"$USBC_FAKE_LOG")" 'fake log'
 pass "rollback keeps a CT it did not create"
@@ -687,6 +736,13 @@ write_uninstall_fixture() {
     printf 'rule\n' >"$udev/99-usbcopy.rules"
     printf 'movie data\n' >"$root/media/movies/keep.mkv"
     printf 'series data\n' >"$root/media/series/keep.s01e01.mkv"
+    {
+        printf 'hostname: usbcopy\n'
+        printf 'mp0: %s,mp=/mnt/usb,ro=1\n' "$root/srv/usb-ingest"
+        printf 'mp1: %s,mp=/var/lib/usbcopy/events\n' "$root/srv/usbcopy/events"
+        printf 'mp2: %s,mp=/data/movies\n' "$root/media/movies"
+        printf 'mp3: %s,mp=/data/series\n' "$root/media/series"
+    } >"$root/pct-config"
 
     python3 - "$manifest" "$root" <<'PYFIXTURE'
 import json
@@ -741,6 +797,11 @@ payload = {
         "propagation_after": "shared",
     }],
     "backups": [f"{root}/etc/usbcopy/backup/20260101T000000Z{host_lib}/mount-usb.sh"],
+    "backup_root": f"{root}/etc/usbcopy/backup",
+    "backup_targets": [{
+        "target": f"{host_lib}/mount-usb.sh",
+        "backup": f"{root}/etc/usbcopy/backup/20260101T000000Z{host_lib}/mount-usb.sh",
+    }],
     "destinations": {
         "movies": {"host_path": f"{root}/media/movies", "ct_path": "/data/movies"},
         "series": {"host_path": f"{root}/media/series", "ct_path": "/data/series"},
@@ -755,9 +816,18 @@ PYFIXTURE
 uninstall_case() {
     local root=$1
     shift
-    USBC_MANIFEST_PATH="$root/etc/usbcopy/install-manifest.json" \
-        USBC_BACKUP_ROOT="$root/etc/usbcopy/backup" \
+    rm -f -- "${USBC_FAKE_STATE_DIR:-/nonexistent}/ct-running" "${USBC_FAKE_STATE_DIR:-/nonexistent}/ct-stopped"
+    env -u USBC_BACKUP_ROOT \
+        USBC_MANIFEST_PATH="$root/etc/usbcopy/install-manifest.json" \
+        USBC_HOST_LIB_DIR="$root/usr/local/lib/usbcopy" \
+        USBC_UDEV_RULES_DIR="$root/etc/udev/rules.d" \
+        USBC_SYSTEMD_DIR="$root/etc/systemd/system" \
+        USBC_USB_INGEST_DIR="$root/srv/usb-ingest" \
+        USBC_SPOOL_DIR="$root/srv/usbcopy/events" \
+        USBC_FAKE_PCT_CONFIG="$root/pct-config" \
         USBC_FAKE_MOUNTPOINTS="$root/srv/usb-ingest" \
+        USBC_TEST_MODE=1 \
+        USBC_FAIL_AT=unused \
         "$UNINSTALL" "$@"
 }
 
@@ -782,6 +852,7 @@ assert_contains 'pct start 101' "$log" 'fake log'
 assert_contains 'pct set 101 -delete mp0' "$log" 'fake log'
 assert_contains 'pct exec 101 -- rm -f -- /etc/usbcopy/config.toml' "$log" 'fake log'
 assert_contains 'pct exec 101 -- rm -rf -- /opt/usbcopy' "$log" 'fake log'
+assert_contains 'pct exec 101 -- systemctl daemon-reload' "$log" 'fake log'
 assert_not_contains 'pct destroy' "$log" 'fake log'
 assert_contains 'umount ' "$log" 'fake log'
 [[ -f $UN_ROOT/media/movies/keep.mkv ]] || fail "uninstall removed destination contents"
@@ -791,7 +862,7 @@ assert_contains 'umount ' "$log" 'fake log'
 [[ ! -e $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "uninstall left the manifest behind"
 [[ ! -e $UN_ROOT/srv/usbcopy/events ]] || fail "uninstall left a created directory behind"
 assert_contains 'OLD HOST SCRIPT' "$(<"$UN_ROOT/usr/local/lib/usbcopy/mount-usb.sh")" 'restored host script'
-pass "default uninstall removes host wiring and app payload but keeps the CT and destination data"
+pass "default uninstall removes host wiring and app payload, restores backups without USBC_BACKUP_ROOT, and keeps the CT and destination data"
 
 UN_ROOT="$WORK/uninstall-destroy"
 write_uninstall_fixture "$UN_ROOT"
@@ -814,11 +885,13 @@ out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
 unset USBC_FAKE_CT_MOUNT_STUCK
 ((status != 0)) || fail "uninstall with a stuck bind mount unexpectedly exited zero"
 assert_contains 'kept application directories' "$out" 'stuck-mount output'
+assert_contains 'keeping install manifest' "$out" 'stuck-mount output'
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "stuck-mount uninstall removed the manifest"
 if grep -qF 'rm -rf -- /opt/usbcopy' "$USBC_FAKE_LOG"; then
     fail "uninstall removed container directories while a bind mount was still present"
 fi
 [[ -f $UN_ROOT/media/movies/keep.mkv ]] || fail "stuck-mount uninstall removed destination contents"
-pass "a bind mount that cannot be removed stops container directory deletion"
+pass "a bind mount that cannot be removed stops container directory deletion and keeps the manifest"
 
 UN_ROOT="$WORK/uninstall-dry"
 write_uninstall_fixture "$UN_ROOT"
@@ -833,5 +906,191 @@ fi
 [[ -f $UN_ROOT/etc/udev/rules.d/99-usbcopy.rules ]] || fail "uninstall --dry-run removed the udev rule"
 pass "uninstall --dry-run prints the plan and changes nothing"
 
+
+UN_ROOT="$WORK/uninstall-destroy-fail"
+write_uninstall_fixture "$UN_ROOT"
+: >"$USBC_FAKE_LOG"
+export USBC_FAKE_PCT_DESTROY_FAIL=1
+out=$(uninstall_case "$UN_ROOT" --yes --destroy-ct 2>&1) && status=0 || status=$?
+unset USBC_FAKE_PCT_DESTROY_FAIL
+((status != 0)) || fail "failed destroy unexpectedly exited zero"
+assert_contains 'could not destroy CT 101' "$out" 'destroy failure output'
+assert_contains 'keeping install manifest' "$out" 'destroy failure output'
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "failed destroy removed the manifest"
+[[ -f $UN_ROOT/media/movies/keep.mkv ]] || fail "failed destroy removed destination contents"
+pass "a failed CT destroy keeps the manifest and destination data"
+
+UN_ROOT="$WORK/uninstall-stopped"
+write_uninstall_fixture "$UN_ROOT"
+: >"$USBC_FAKE_LOG"
+export USBC_FAKE_CT_STOPPED=1
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1)
+unset USBC_FAKE_CT_STOPPED
+log=$(<"$USBC_FAKE_LOG")
+start_line=$(grep -nF 'pct start 101' <<<"$log" | head -n 1 | cut -d: -f1)
+stop_app_line=$(grep -nF 'pct exec 101 -- systemctl stop usbcopy.service' <<<"$log" | head -n 1 | cut -d: -f1)
+[[ -n $start_line && -n $stop_app_line ]] || fail "stopped-CT uninstall did not start the CT and stop the app"
+((start_line < stop_app_line)) || fail "stopped-CT uninstall removed payload before stopping the app"
+assert_contains 'Kept CT 101 (stopped)' "$out" 'stopped-CT output'
+pass "a stopped CT is started, its app disabled, and only then cleaned"
+
+UN_ROOT="$WORK/uninstall-stale-hostname"
+write_uninstall_fixture "$UN_ROOT"
+write_fake_pct_config "$UN_ROOT/pct-config" other-host
+: >"$USBC_FAKE_LOG"
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
+((status != 0)) || fail "stale hostname manifest unexpectedly succeeded"
+assert_contains 'hostname does not match' "$out" 'stale manifest output'
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "stale manifest was removed"
+[[ -f $UN_ROOT/usr/local/lib/usbcopy/mount-usb.sh ]] || fail "stale manifest cleanup removed host files"
+if grep -Eq '^pct (stop|set|exec|destroy) ' "$USBC_FAKE_LOG"; then
+    fail "stale hostname manifest mutated the CT"
+fi
+pass "a stale manifest hostname aborts before any CT mutation and keeps the manifest"
+
+UN_ROOT="$WORK/uninstall-stale-mounts"
+write_uninstall_fixture "$UN_ROOT"
+grep -v 'mp2: ' "$UN_ROOT/pct-config" >"$UN_ROOT/pct-config.stale"
+mv -- "$UN_ROOT/pct-config.stale" "$UN_ROOT/pct-config"
+: >"$USBC_FAKE_LOG"
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
+((status != 0)) || fail "stale mount-source manifest unexpectedly succeeded"
+assert_contains 'mount mp2 does not match' "$out" 'stale mount output'
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "stale mount manifest was removed"
+if grep -Eq '^pct (stop|set|exec|destroy) ' "$USBC_FAKE_LOG"; then
+    fail "stale mount manifest mutated the CT"
+fi
+pass "a stale mount source aborts before any CT mutation and keeps the manifest"
+
+UN_ROOT="$WORK/uninstall-missing-ct"
+write_uninstall_fixture "$UN_ROOT"
+: >"$USBC_FAKE_LOG"
+export USBC_FAKE_CT_MISSING=1
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
+unset USBC_FAKE_CT_MISSING
+((status == 0)) || fail "missing-CT uninstall unexpectedly failed"
+assert_contains 'was not found' "$out" 'missing-CT output'
+assert_contains 'OLD HOST SCRIPT' "$(<"$UN_ROOT/usr/local/lib/usbcopy/mount-usb.sh")" 'missing-CT host cleanup'
+[[ -f $UN_ROOT/etc/udev/rules.d/99-usbcopy.rules ]] && fail "missing-CT uninstall skipped udev cleanup"
+[[ ! -e $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "missing-CT uninstall left the manifest behind"
+pass "a missing CT is distinguished from a query failure and host cleanup still completes"
+
+UN_ROOT="$WORK/uninstall-query-fail"
+write_uninstall_fixture "$UN_ROOT"
+: >"$USBC_FAKE_LOG"
+export USBC_FAKE_CT_QUERY_FAIL=1
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
+unset USBC_FAKE_CT_QUERY_FAIL
+((status != 0)) || fail "CT query failure unexpectedly exited zero"
+assert_contains 'could not query CT 101' "$out" 'query failure output'
+assert_contains 'keeping install manifest' "$out" 'query failure output'
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "query failure removed the manifest"
+assert_contains 'NEW HOST SCRIPT' "$(<"$UN_ROOT/usr/local/lib/usbcopy/mount-usb.sh")" 'query failure host state'
+if grep -Eq '^pct (stop|set|exec|destroy) ' "$USBC_FAKE_LOG"; then
+    fail "query failure mutated the CT"
+fi
+pass "a CT query failure aborts before host cleanup and keeps the manifest"
+
+UN_ROOT="$WORK/uninstall-missing-mount-record"
+write_uninstall_fixture "$UN_ROOT"
+python3 - "$UN_ROOT/etc/usbcopy/install-manifest.json" <<'PYNOMOUNT'
+import json
+import sys
+
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+data["mounts"] = [mount for mount in data["mounts"] if mount["slot"] != "mp2"]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle)
+PYNOMOUNT
+: >"$USBC_FAKE_LOG"
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
+((status != 0)) || fail "missing mount record unexpectedly succeeded"
+assert_contains 'no mount record for /data/movies' "$out" 'missing mount output'
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "missing mount record removed the manifest"
+if grep -qF 'rm -rf -- /opt/usbcopy' "$USBC_FAKE_LOG"; then
+    fail "missing mount record allowed container directory removal"
+fi
+pass "a missing mount record fails closed and keeps the manifest"
+
+UN_ROOT="$WORK/uninstall-findmnt-fail"
+write_uninstall_fixture "$UN_ROOT"
+: >"$USBC_FAKE_LOG"
+export USBC_FAKE_FINDMNT_FAIL=1
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
+unset USBC_FAKE_FINDMNT_FAIL
+((status != 0)) || fail "findmnt failure unexpectedly succeeded"
+assert_contains 'findmnt failed while checking CT path' "$out" 'findmnt failure output'
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "findmnt failure removed the manifest"
+if grep -qF 'rm -rf -- /opt/usbcopy' "$USBC_FAKE_LOG"; then
+    fail "findmnt failure allowed container directory removal"
+fi
+pass "a findmnt error fails closed and keeps the manifest"
+
+UN_ROOT="$WORK/uninstall-parent-mount"
+write_uninstall_fixture "$UN_ROOT"
+: >"$USBC_FAKE_LOG"
+export USBC_FAKE_CT_MOUNT_STUCK='/data'
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
+unset USBC_FAKE_CT_MOUNT_STUCK
+((status != 0)) || fail "parent mount unexpectedly succeeded"
+assert_contains 'is on mount' "$out" 'parent mount output'
+[[ -f $UN_ROOT/media/movies/keep.mkv ]] || fail "parent mount uninstall removed destination contents"
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "parent mount removed the manifest"
+pass "a mounted parent directory fails closed and keeps destination data"
+
+UN_ROOT="$WORK/uninstall-umount-fail"
+write_uninstall_fixture "$UN_ROOT"
+: >"$USBC_FAKE_LOG"
+export USBC_FAKE_UMOUNT_FAIL=1
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
+unset USBC_FAKE_UMOUNT_FAIL
+((status != 0)) || fail "self-bind unmount failure unexpectedly succeeded"
+assert_contains 'could not unmount self-bind' "$out" 'unmount failure output'
+assert_contains 'keeping install manifest' "$out" 'unmount failure output'
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "unmount failure removed the manifest"
+pass "a self-bind unmount failure is counted and keeps the manifest"
+
+UN_ROOT="$WORK/uninstall-unsafe-paths"
+write_uninstall_fixture "$UN_ROOT"
+python3 - "$UN_ROOT/etc/usbcopy/install-manifest.json" <<'PYUNSAFE'
+import json
+import sys
+
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+data["host_files"].append("/etc/passwd")
+data["container_dirs"].append("/etc")
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle)
+PYUNSAFE
+: >"$USBC_FAKE_LOG"
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1) && status=0 || status=$?
+((status != 0)) || fail "unsafe manifest paths unexpectedly succeeded"
+assert_contains 'refusing to remove unsafe host file' "$out" 'unsafe path output'
+assert_contains 'refusing unsafe container directory path' "$out" 'unsafe path output'
+assert_contains 'keeping install manifest' "$out" 'unsafe path output'
+[[ -f $UN_ROOT/etc/usbcopy/install-manifest.json ]] || fail "unsafe path uninstall removed the manifest"
+[[ -f /etc/passwd ]] || fail "unsafe manifest deleted /etc/passwd"
+pass "unsafe manifest host and container paths fail closed and keep the manifest"
+
+UN_ROOT="$WORK/uninstall-spool"
+write_uninstall_fixture "$UN_ROOT"
+printf '{"action":"add"}\n' >"$UN_ROOT/srv/usbcopy/events/pending.json"
+out=$(uninstall_case "$UN_ROOT" --yes 2>&1)
+assert_contains 'has pending events' "$out" 'spool output'
+[[ -f $UN_ROOT/srv/usbcopy/events/pending.json ]] || fail "pending spool events were removed"
+pass "pending spool events are kept with an explicit warning"
+
+: >"$USBC_FAKE_LOG"
+out=$(env -u USBC_TEST_MODE -u USBC_FAIL_AT -u USBC_BACKUP_ROOT \
+    USBC_MANIFEST_PATH="$UN_ROOT/etc/usbcopy/install-manifest.json" \
+    "$UNINSTALL" --yes 2>&1) && status=0 || status=$?
+((status != 0)) || fail "non-root uninstall unexpectedly succeeded"
+assert_contains 'must be run as root' "$out" 'root preflight output'
+if grep -Eq '^pct ' "$USBC_FAKE_LOG"; then
+    fail "non-root uninstall called pct before the root preflight"
+fi
+pass "non-dry-run uninstall requires root before touching the CT"
 
 printf '\nAll installer execution tests passed.\n'

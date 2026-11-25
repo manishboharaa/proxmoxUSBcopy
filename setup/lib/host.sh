@@ -40,6 +40,7 @@ backup_host_file() {
     mkdir -p -- "${backup%/*}" || die "could not create backup directory ${backup%/*}"
     cp -a -- "$target" "$backup" || die "could not back up $target"
     USBC_BACKUP_FILES+=("$backup")
+    USBC_BACKUP_TARGETS+=("$target"$'\t'"$backup")
     log "backed up $target to $backup"
 }
 
@@ -103,6 +104,7 @@ configure_host_propagation() {
     local propagation_before=''
     local propagation_after=''
 
+    propagation_before=$(findmnt -no PROPAGATION -T "$USBC_USB_INGEST_DIR" 2>/dev/null || printf 'unknown')
     if findmnt --mountpoint "$USBC_USB_INGEST_DIR" >/dev/null 2>&1; then
         log "$USBC_USB_INGEST_DIR is already a mountpoint"
     else
@@ -111,13 +113,15 @@ configure_host_propagation() {
         self_bind=true
         log "self-bound $USBC_USB_INGEST_DIR so propagation changes stay local to it"
     fi
-    propagation_before=$(findmnt -no PROPAGATION -T "$USBC_USB_INGEST_DIR" 2>/dev/null || printf 'unknown')
+    # Record the mount as soon as it exists so a propagation failure can still
+    # be rolled back. The propagation-after field is filled in below.
+    USBC_HOST_MOUNTS+=(
+        "$USBC_USB_INGEST_DIR"$'\t'"self-bind"$'\t'"$self_bind"$'\t'"$propagation_before"$'\t'"unknown"
+    )
     mount --make-rshared "$USBC_USB_INGEST_DIR" \
         || die "could not make $USBC_USB_INGEST_DIR rshared"
     propagation_after=$(findmnt -no PROPAGATION -T "$USBC_USB_INGEST_DIR" 2>/dev/null || printf 'unknown')
-    USBC_HOST_MOUNTS+=(
-        "$USBC_USB_INGEST_DIR"$'\t'"self-bind"$'\t'"$self_bind"$'\t'"$propagation_before"$'\t'"$propagation_after"
-    )
+    USBC_HOST_MOUNTS[${#USBC_HOST_MOUNTS[@]} - 1]="$USBC_USB_INGEST_DIR"$'\t'"self-bind"$'\t'"$self_bind"$'\t'"$propagation_before"$'\t'"$propagation_after"
     if [[ $propagation_after != *shared* ]]; then
         warn "$USBC_USB_INGEST_DIR propagation is '$propagation_after', not 'shared'; USB hotplug may not reach CT $CT_ID"
     fi
@@ -165,8 +169,7 @@ configure_host() {
             || die "could not chown destination root $DEST_EXTRA"
     fi
 
-    install -d -m 0755 "$USBC_HOST_LIB_DIR" \
-        || die "could not create $USBC_HOST_LIB_DIR"
+    ensure_host_dir "$USBC_HOST_LIB_DIR" 0755
     install_host_file "$USBC_HOST_ASSET_DIR/mount-usb.sh" \
         "$USBC_HOST_LIB_DIR/mount-usb.sh" 0755
     install_host_file "$USBC_HOST_ASSET_DIR/unmount-usb.sh" \

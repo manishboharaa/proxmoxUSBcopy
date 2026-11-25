@@ -26,6 +26,8 @@ USBC_MANIFEST_PATH=${USBC_MANIFEST_PATH:-/etc/usbcopy/install-manifest.json}
 # shellcheck disable=SC1091
 source "$LIB_DIR/common.sh"
 # shellcheck disable=SC1091
+source "$LIB_DIR/preflight.sh"
+# shellcheck disable=SC1091
 source "$LIB_DIR/rollback.sh"
 
 usage() {
@@ -137,7 +139,7 @@ print_uninstall_plan() {
 
     plan "stop and disable usbcopy.service in CT $RB_CT_ID"
     for record in "${RB_MOUNTS[@]}"; do
-        IFS=$'\t' read -r slot host_path ct_path <<<"$record"
+        IFS=$'\t' read -r slot host_path ct_path _ <<<"$record"
         plan "remove CT $RB_CT_ID bind mount $slot ($host_path -> $ct_path)"
     done
     for path in "${RB_CONTAINER_FILES[@]}" "${RB_CONTAINER_DIRS[@]}"; do
@@ -185,26 +187,51 @@ print_uninstall_plan() {
     done
 }
 
+rb_abort_uninstall() {
+    local reason=$1
+
+    rb_note_failure "$reason"
+    warn "aborting before host cleanup; the CT and host state were not modified"
+    rb_print_incomplete
+    if [[ -n ${USBC_MANIFEST_PATH:-} && -e ${USBC_MANIFEST_PATH:-} ]]; then
+        warn "keeping install manifest $USBC_MANIFEST_PATH"
+    fi
+    exit 1
+}
+
 run_uninstall() {
     local ct=$RB_CT_ID
-    local ct_exists=0
+    local ct_present=0
     local ct_was_running=0
+    local destroy_ok=1
 
     RB_FAILURES=0
-    if [[ -n $ct ]]; then
-        if rb_ct_running "$ct"; then
-            ct_exists=1
+    if ! rb_query_ct "$ct"; then
+        rb_abort_uninstall "could not query CT $ct: ${RB_CT_QUERY_ERROR:-unknown error}"
+    fi
+    case "$RB_CT_STATE" in
+        running)
+            ct_present=1
             ct_was_running=1
-        elif pct status "$ct" >/dev/null 2>&1; then
-            ct_exists=1
+            ;;
+        stopped)
+            ct_present=1
+            ;;
+        missing)
+            warn "CT $ct was not found; skipping container cleanup"
+            ;;
+        *)
+            rb_abort_uninstall "unexpected state for CT $ct; refusing to modify it"
+            ;;
+    esac
+    if ((ct_present == 1)); then
+        if ! rb_verify_ct_identity "$ct"; then
+            rb_abort_uninstall "refusing to modify CT $ct because its identity does not match the install manifest"
         fi
-    fi
-    if ((ct_exists == 0)); then
-        warn "CT ${ct:-<unknown>} was not found; skipping container cleanup"
-    fi
-
-    if ((ct_exists == 1)); then
         if ((${#RB_CONTAINER_UNITS[@]} > 0)); then
+            # Start a stopped CT first so the app can be stopped and disabled
+            # before any live application files are removed.
+            rb_start_ct "$ct"
             rb_stop_disable_ct_app "$ct"
         fi
         if ((${#RB_MOUNTS[@]} > 0)); then
@@ -221,23 +248,25 @@ run_uninstall() {
     rb_remove_udev_rules
     rb_remove_host_files
     rb_remove_host_mounts
+    rb_warn_pending_spool
     rb_remove_created_dirs
     rb_restore_backups
     rb_reload_host
 
     if ((DESTROY_CT == 1)); then
-        if ((ct_exists == 1)); then
+        if ((ct_present == 1)); then
             rb_stop_ct "$ct"
             log "destroy CT $ct"
             if pct destroy "$ct" >/dev/null 2>&1; then
                 log "destroyed CT $ct"
             else
+                destroy_ok=0
                 rb_note_failure "could not destroy CT $ct"
             fi
         else
-            warn "CT ${ct:-<unknown>} was not found; nothing to destroy"
+            warn "CT ${ct:-<unknown>} was not found or cannot be queried; nothing to destroy"
         fi
-    elif ((ct_exists == 1)); then
+    elif ((ct_present == 1)); then
         if ((ct_was_running == 1)); then
             log "Kept CT $ct (still running)"
         else
@@ -246,17 +275,29 @@ run_uninstall() {
         fi
     fi
 
-    rb_remove_manifest
+    rb_finish_manifest "uninstall"
     rb_print_kept
     if ((RB_FAILURES > 0)); then
         warn "uninstall finished with $RB_FAILURES cleanup warning(s); review the output above"
         exit 1
     fi
+    ((destroy_ok == 1)) || exit 1
     log "uninstall complete"
 }
 
 main() {
     parse_args "$@"
+    if ((DRY_RUN == 0)); then
+        preflight_root
+        require_cmd pct
+        require_cmd systemctl
+        require_cmd udevadm
+        require_cmd findmnt
+        require_cmd mount
+        require_cmd umount
+        require_cmd python3
+        require_cmd realpath
+    fi
     if [[ ! -f $USBC_MANIFEST_PATH ]]; then
         die "no install manifest found at $USBC_MANIFEST_PATH; proxmoxUSBcopy does not appear to be installed (set USBC_MANIFEST_PATH to use another manifest)"
     fi

@@ -21,16 +21,53 @@ case "$command" in
         printf '100        stopped                 legacy-ct\n'
         ;;
     status)
-        if [[ ${USBC_FAKE_CT_MISSING:-0} == 1 ]]; then
+        state=${USBC_FAKE_STATE_DIR:-/nonexistent}
+        if [[ ${USBC_FAKE_CT_QUERY_FAIL:-0} == 1 ]]; then
+            printf 'connection to cluster failed\n' >&2
             exit 1
         fi
-        if [[ ${USBC_FAKE_CT_STOPPED:-0} == 1 ]]; then
+        if [[ ${USBC_FAKE_CT_MISSING:-0} == 1 ]]; then
+            printf "Configuration file 'nodes/test/lxc/%s.conf' does not exist\n" "${2:-101}" >&2
+            exit 2
+        fi
+        if [[ -e $state/ct-stopped || (${USBC_FAKE_CT_STOPPED:-0} == 1 && ! -e $state/ct-running) ]]; then
             printf 'status: stopped\n'
         else
             printf 'status: running\n'
         fi
         ;;
-    create | start | stop | push)
+    config)
+        if [[ ${USBC_FAKE_PCT_CONFIG_FAIL:-0} == 1 ]]; then
+            printf 'configuration query failed\n' >&2
+            exit 1
+        fi
+        if [[ -n ${USBC_FAKE_PCT_CONFIG:-} ]]; then
+            cat -- "$USBC_FAKE_PCT_CONFIG"
+            exit 0
+        fi
+        printf 'hostname: %s\n' "${USBC_FAKE_CT_HOSTNAME:-usbcopy}"
+        ;;
+    create | start | stop | destroy | push)
+        state=${USBC_FAKE_STATE_DIR:-/nonexistent}
+        case "$command" in
+            start)
+                mkdir -p -- "$state"
+                rm -f -- "$state/ct-stopped"
+                : >"$state/ct-running"
+                ;;
+            stop)
+                mkdir -p -- "$state"
+                rm -f -- "$state/ct-running"
+                : >"$state/ct-stopped"
+                ;;
+            destroy)
+                rm -f -- "$state/ct-running" "$state/ct-stopped"
+                if [[ ${USBC_FAKE_PCT_DESTROY_FAIL:-0} == 1 ]]; then
+                    printf 'destroy failed\n' >&2
+                    exit 1
+                fi
+                ;;
+        esac
         if [[ $command == push && -n ${USBC_FAKE_PUSH_DIR:-} ]]; then
             # pct push <vmid> <source> <destination>
             src=${3:-}
@@ -130,6 +167,23 @@ case "$command" in
                 if [[ -n ${USBC_FAKE_USB_ENTRY:-} ]]; then
                     printf '%s\n' "$USBC_FAKE_USB_ENTRY"
                 fi
+                ;;
+            *'findmnt -n -o TARGET -T'*)
+                if [[ ${USBC_FAKE_FINDMNT_FAIL:-0} == 1 ]]; then
+                    exit 20
+                fi
+                found=''
+                for mount_path in ${USBC_FAKE_CT_MOUNT_STUCK:-}; do
+                    if [[ $last == "$mount_path" || $last == "$mount_path"/* ]]; then
+                        found=$mount_path
+                        break
+                    fi
+                done
+                if [[ -n $found ]]; then
+                    printf '%s' "$found"
+                    exit 0
+                fi
+                exit 10
                 ;;
             *'findmnt --mountpoint'*)
                 if [[ " ${USBC_FAKE_CT_MISSING_MOUNT:-} " == *" $last "* ]]; then

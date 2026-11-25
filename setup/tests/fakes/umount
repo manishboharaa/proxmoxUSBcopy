@@ -6,5 +6,10 @@ if [[ -n ${USBC_FAKE_LOG:-} ]]; then
     printf 'umount %s\n' "$*" >>"$USBC_FAKE_LOG"
 fi
 
+if [[ ${USBC_FAKE_UMOUNT_FAIL:-0} == 1 ]]; then
+    printf 'umount failed\n' >&2
+    exit 1
+fi
+
 state=${USBC_FAKE_STATE_DIR:-/nonexistent}
 rm -f -- "$state/self-bind"

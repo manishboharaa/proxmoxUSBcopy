@@ -15,6 +15,7 @@ USBC_INSTALLED_UNITS=()
 USBC_CONTAINER_UNITS=()
 USBC_INSTALLED_UDEV=()
 USBC_BACKUP_FILES=()
+USBC_BACKUP_TARGETS=()
 USBC_MOUNTS=()
 USBC_HOST_MOUNTS=()
 
@@ -105,6 +106,8 @@ write_manifest() {
         USBC_MANIFEST_CONTAINER_UNITS="$(manifest_lines "${USBC_CONTAINER_UNITS[@]}")" \
         USBC_MANIFEST_UDEV="$(manifest_lines "${USBC_INSTALLED_UDEV[@]}")" \
         USBC_MANIFEST_BACKUPS="$(manifest_lines "${USBC_BACKUP_FILES[@]}")" \
+        USBC_MANIFEST_BACKUP_ROOT="${USBC_BACKUP_ROOT:-}" \
+        USBC_MANIFEST_BACKUP_TARGETS="$(manifest_lines "${USBC_BACKUP_TARGETS[@]}")" \
         USBC_MANIFEST_MOUNTS="$(manifest_lines "${USBC_MOUNTS[@]}")" \
         USBC_MANIFEST_HOST_MOUNTS="$(manifest_lines "${USBC_HOST_MOUNTS[@]}")" \
         python3 - <<'PY'
@@ -212,6 +215,12 @@ payload = {
     "mounts": mounts,
     "host_mounts": host_mounts,
     "backups": lines("USBC_MANIFEST_BACKUPS"),
+    "backup_root": text("USBC_MANIFEST_BACKUP_ROOT"),
+    "backup_targets": [
+        {"target": row.split("\t", 1)[0], "backup": row.split("\t", 1)[1]}
+        for row in lines("USBC_MANIFEST_BACKUP_TARGETS")
+        if "\t" in row
+    ],
     "files": host_files + container_files,
     "dirs": host_dirs + container_dirs,
     "units": host_units + container_units,
