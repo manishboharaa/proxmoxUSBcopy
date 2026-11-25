@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from usbcopy import api
+from usbcopy import __version__, api
 from usbcopy.api import _open_stream_connection, run_event_stream
 from usbcopy.app import create_app
 from usbcopy.auth import SessionManager, hash_password
@@ -281,7 +281,7 @@ def test_status_after_login(client: TestClient, login: SimpleNamespace):
     response = client.get("/api/status")
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == "1.1.0"
+    assert body["version"] == __version__
     assert body["mode"] == "review"
     assert body["auto_enabled"] is False
     assert body["drives_present"] == 0
@@ -636,7 +636,7 @@ def test_update_check_endpoint_reports_status(client: TestClient, monkeypatch):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["update_available"] is True
-    assert body["current_version"] == "1.1.0"
+    assert body["current_version"] == __version__
     assert body["latest_version"] == "9.9.9"
     update_module.reset_cache()
 

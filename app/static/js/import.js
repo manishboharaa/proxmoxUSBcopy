@@ -792,12 +792,18 @@
     resultEl.hidden = false;
     runTitle.textContent = "Import started.";
     setRunChip("queued");
-    runNote.textContent =
-      "Run " + runId + " is queued. Progress follows below.";
+    if (preview && preview.files > 0) {
+      runNote.textContent =
+        "Copying " + preview.files +
+        (preview.files === 1 ? " file" : " files") +
+        " (" + formatBytes(preview.bytes) + "). Progress follows below.";
+    } else {
+      runNote.textContent = "Copy is queued. Progress follows below.";
+    }
     runFill.style.width = "0%";
     runMeter.setAttribute("aria-valuenow", "0");
     runLink.href = "/runs/" + runId;
-    runLink.textContent = "Open run " + runId;
+    runLink.textContent = "Open run";
     setStatus("Import started.", false);
     followRun(runId);
   }

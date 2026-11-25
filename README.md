@@ -287,11 +287,31 @@ and session secret.
 The dashboard checks the GitHub repository for a newer version every 6 hours
 (configurable under `[update]` in `config.toml`; the check only reads a small
 `VERSION` file and fails quietly when offline). When an update exists, a banner
-appears at the top of every page with the installed and latest versions and a
-**Copy update command** button. The dashboard runs inside the unprivileged CT,
-so it cannot update itself: the button copies the one-line installer command
-(`curl … | bash -s -- --update`) and you paste it into the Proxmox host shell.
-The update keeps your config, password, and data.
+appears at the top of every page with the installed and latest versions.
+
+The dashboard runs inside the unprivileged CT, so it cannot update itself —
+the button copies the command and you run it on the Proxmox host:
+
+1. Click **Copy update command** in the banner.
+2. Open your Proxmox host shell (Datacenter → your node → **Shell**, or SSH to
+   the host).
+3. Paste the command and press Enter. The script updates the CT in place —
+   your config, password, and data are kept.
+4. Wait for `update complete`, then refresh the dashboard tab.
+
+### The CT has no root password
+
+The installer creates the container without a root password (the console login
+is locked). The "save this password" box printed at install is only for the
+dashboard login — the two are separate, and changing the dashboard password
+never touches the CT login. You do not normally need a CT password: from the
+Proxmox host shell, `pct enter <ct-id>` gives you a root shell inside the CT
+(host root is trusted, no password asked). If you want console-login access
+(for example from the PVE web UI console), set a password yourself:
+
+```
+pct exec <ct-id> -- bash -c "echo 'root:NEWPASSWORD' | chpasswd"
+```
 
 ## Safety
 
@@ -374,6 +394,11 @@ later install creates a new CT; pass `--destroy-ct` during uninstall if you
 want the old one removed.
 
 ## FAQ
+
+**Is the CT login password the same as the dashboard password?**
+No. The CT is created without a root password and the dashboard password is
+separate; changing the dashboard password never changes the CT login. See
+"The CT has no root password" above.
 
 **Does it delete or move anything on the USB drive?**
 No. The source is read-only, and copying is copy-only.

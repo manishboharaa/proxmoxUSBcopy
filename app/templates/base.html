@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light dark">
 <meta name="csrf-token" content="{{ csrf_token }}">
 <title>{% block title %}Overview{% endblock %} — proxmoxUSBcopy</title>
-<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/app.css?v={{ version }}">
 <script>
 (function () {
   try {
@@ -18,7 +18,7 @@
   }
 })();
 </script>
-<script src="/static/js/theme.js" defer></script>
+<script src="/static/js/theme.js?v={{ version }}" defer></script>
 </head>
 <body data-csrf="{{ csrf_token }}">
 <a class="skip-link" href="#main">Skip to content</a>
@@ -133,7 +133,10 @@
 
 <main class="page" id="main" tabindex="-1">
 <div class="update-banner" id="update-banner" role="status" hidden>
-  <span class="update-banner-text" id="update-banner-text"></span>
+  <span class="update-banner-body">
+    <span class="update-banner-text" id="update-banner-text"></span>
+    <span class="update-banner-hint">1. Click &ldquo;Copy update command&rdquo; &middot; 2. Paste it in your Proxmox host shell (node &rarr; Shell) &middot; 3. Wait for &ldquo;update complete&rdquo;, then refresh this page.</span>
+  </span>
   <span class="update-banner-actions">
     <button class="btn btn-quiet" id="update-copy" type="button">Copy update command</button>
     <button class="btn btn-quiet" id="update-dismiss" type="button">Dismiss</button>
@@ -149,7 +152,7 @@
 {% endblock %}
 
 {% block scripts %}{% endblock %}
-<script src="/static/js/update.js" defer></script>
+<script src="/static/js/update.js?v={{ version }}" defer></script>
 </main>
 </body>
 </html>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from usbcopy import update_check
+from usbcopy import __version__, update_check
 from usbcopy.config import load_config
 
 
@@ -62,15 +62,15 @@ def test_fetch_remote_version_returns_none_when_unreachable(monkeypatch):
 
 def test_check_for_update_reports_newer_version(monkeypatch):
     monkeypatch.setattr(
-        update_check, "fetch_remote_version", lambda repo, branch: "1.2.0"
+        update_check, "fetch_remote_version", lambda repo, branch: "9.9.9"
     )
     config = load_config("config.example.toml")
 
     result = update_check.check_for_update(config)
 
     assert result["update_available"] is True
-    assert result["current_version"] == "1.1.0"
-    assert result["latest_version"] == "1.2.0"
+    assert result["current_version"] == __version__
+    assert result["latest_version"] == "9.9.9"
     assert result["command"].endswith("| bash -s -- --update")
     assert "githubusercontent.com/manishboharaa/proxmoxUSBcopy/main" in result["command"]
 

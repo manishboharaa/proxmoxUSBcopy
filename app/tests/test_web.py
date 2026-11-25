@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from usbcopy import __version__
 from usbcopy.app import create_app
 from usbcopy.auth import SessionManager, hash_password
 from usbcopy.config import Config, Destination
@@ -511,8 +512,8 @@ def test_login_writes_audit_row(client, conn):
 
 def test_overview_uses_local_css_and_theme_script(client, login):
     html = client.get("/").text
-    assert 'href="/static/css/app.css"' in html
-    assert 'src="/static/js/theme.js"' in html
+    assert 'href="/static/css/app.css?v=' in html
+    assert 'src="/static/js/theme.js?v=' in html
     assert 'id="theme-toggle"' in html
 
     css = client.get("/static/css/app.css")
@@ -565,8 +566,8 @@ def test_import_page_has_no_external_assets(client, login, present_drive):
     body = client.get("/import").text
     for needle in ('<script src="http', '<link href="http', '<img src="http'):
         assert needle not in body
-    assert 'href="/static/css/app.css"' in body
-    assert 'src="/static/js/import.js"' in body
+    assert 'href="/static/css/app.css?v=' in body
+    assert 'src="/static/js/import.js?v=' in body
 
 
 def test_import_page_empty_state_without_drive(client, login):
@@ -634,7 +635,7 @@ def test_import_page_escapes_drive_label(client, login, conn):
 def test_import_page_uses_local_import_script(client, login, present_drive):
     html = client.get("/import").text
     assert 'id="import-app"' in html
-    assert 'src="/static/js/import.js"' in html
+    assert 'src="/static/js/import.js?v=' in html
     script = client.get("/static/js/import.js")
     assert script.status_code == 200
     assert "/api/imports/preview" in script.text
@@ -812,7 +813,7 @@ def test_about_shows_version_and_paths(config, monkeypatch):
     with TestClient(create_app(about_config, start_background=False)) as about_client:
         assert post_form_login(about_client).status_code == 303
         html = about_client.get("/about").text
-    assert "1.1.0" in html and "/data/movies" in html
+    assert __version__ in html and "/data/movies" in html
     assert "/data/series" in html
     assert "/etc/usbcopy/config.toml" in html
 
@@ -853,7 +854,7 @@ def test_new_pages_have_no_external_assets(
         body = client.get(path).text
         for needle in ('<script src="http', '<link href="http', '<img src="http'):
             assert needle not in body
-        assert 'href="/static/css/app.css"' in body
+        assert 'href="/static/css/app.css?v=' in body
 
 
 def test_overview_run_rows_link_to_detail(client, login, sample_runs):
@@ -902,3 +903,22 @@ def test_run_detail_labels_every_item_outcome(client, login, conn):
     }
     for label, chip in expected.items():
         assert f'<span class="chip {chip}">{label}</span>' in html
+
+
+def test_runs_page_cancel_button_only_for_active_runs(client, login, conn):
+    cursor = conn.execute(
+        "INSERT INTO runs (drive_id, destination_key, mode, status) "
+        "VALUES (1, 'movies', 'review', 'running')"
+    )
+    running_id = int(cursor.lastrowid)
+    cursor = conn.execute(
+        "INSERT INTO runs (drive_id, destination_key, mode, status) "
+        "VALUES (1, 'movies', 'review', 'completed')"
+    )
+    done_id = int(cursor.lastrowid)
+    conn.commit()
+
+    html = client.get("/runs").text
+    assert "runs-cancel" in html
+    assert f'data-run-id="{running_id}"' in html
+    assert f'data-run-id="{done_id}"' not in html

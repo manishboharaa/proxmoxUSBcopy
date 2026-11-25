@@ -64,7 +64,14 @@
           <td class="num mono">{{ run.duration }}</td>
           <td><span class="chip {{ run.chip }}">{{ run.status }}</span></td>
           <td class="mono finished">{{ run.finished }}</td>
-          <td class="row-action"><a class="btn btn-quiet" href="/runs/{{ run.run_id }}">Inspect</a></td>
+          <td class="row-action">
+            <a class="btn btn-quiet" href="/runs/{{ run.run_id }}">Inspect</a>
+            {% if run.raw_status in ("queued", "running") %}
+            <button class="btn btn-quiet runs-cancel" type="button"
+                    data-run-id="{{ run.run_id }}"
+                    data-csrf="{{ csrf_token }}">Cancel</button>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -82,4 +89,44 @@
   </div>
   {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  Array.prototype.forEach.call(
+    document.querySelectorAll(".runs-cancel"),
+    function (btn) {
+      btn.addEventListener("click", function () {
+        var runId = btn.getAttribute("data-run-id");
+        btn.disabled = true;
+        btn.textContent = "Cancelling…";
+        fetch("/api/runs/" + runId + "/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ csrf: btn.getAttribute("data-csrf") })
+        })
+          .then(function (response) {
+            if (!response.ok) {
+              return response
+                .json()
+                .then(function (body) {
+                  throw new Error(
+                    (body && body.detail) || "Could not cancel the run."
+                  );
+                });
+            }
+            window.location.reload();
+          })
+          .catch(function (err) {
+            btn.disabled = false;
+            btn.textContent = "Cancel";
+            window.alert(err.message);
+          });
+      });
+    }
+  );
+})();
+</script>
 {% endblock %}
