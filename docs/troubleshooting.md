@@ -90,8 +90,9 @@ the loaded database, spool, and mount paths, plus the log commands.
    deletes files it can apply. If files remain and the app is healthy, check the
    app log; malformed files are moved to `/srv/usbcopy/events/bad/`. Do not edit
    or delete event files unless you accept losing that notification; restarting
-   the app processes pending files again, and the scan service can re-create
-   notifications for mounted drives.
+   the app processes pending files again. For drives that are already mounted,
+   rely on the app's startup scan; the host scan service only handles unmounted
+   devices.
 
 7. Check that the container sees the bind mount:
 
