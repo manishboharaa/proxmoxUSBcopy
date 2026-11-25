@@ -11,6 +11,12 @@ PROG=${PROG:-install.sh}
 DRY_RUN=${DRY_RUN:-0}
 ASSUME_YES=${ASSUME_YES:-0}
 
+# Message from the last failed check_* validator. check_* functions return
+# 1 and set this instead of dying, so interactive prompts can re-ask; the
+# validate_* wrappers below keep the old die-on-first-error behavior for
+# noninteractive runs.
+USBC_VALIDATE_ERROR=''
+
 # Ordered answer stream used by --yes and tests. Answers are space-separated;
 # a literal '' (or "") token means an empty answer. The stream is consumed in
 # prompt order by take_answer.
@@ -199,99 +205,143 @@ ask_secret() {
     printf -v "$varname" '%s' "$value"
 }
 
-validate_int() {
+check_int() {
     local name=$1
     local value=$2
     local min=$3
     local max=$4
-    [[ -n $value ]] || die "$name must not be empty"
-    ((${#value} <= 9)) || die "$name is out of range (got: $value)"
-    [[ $value =~ ^[0-9]+$ ]] || die "$name must be a whole number (got: $value)"
+    USBC_VALIDATE_ERROR=''
+    [[ -n $value ]] || { USBC_VALIDATE_ERROR="$name must not be empty"; return 1; }
+    ((${#value} <= 9)) || { USBC_VALIDATE_ERROR="$name is out of range (got: $value)"; return 1; }
+    [[ $value =~ ^[0-9]+$ ]] || { USBC_VALIDATE_ERROR="$name must be a whole number (got: $value)"; return 1; }
     ((10#$value >= min && 10#$value <= max)) \
-        || die "$name must be between $min and $max (got: $value)"
+        || { USBC_VALIDATE_ERROR="$name must be between $min and $max (got: $value)"; return 1; }
+    return 0
 }
 
-validate_admin_password() {
+validate_int() {
+    check_int "$@" || die "$USBC_VALIDATE_ERROR"
+}
+
+check_password() {
     local password=$1
     local LC_ALL=C
     local bytes=${#password}
 
-    [[ -n $password ]] || die "admin password must not be empty"
+    USBC_VALIDATE_ERROR=''
+    [[ -n $password ]] || { USBC_VALIDATE_ERROR="admin password must not be empty"; return 1; }
     if ((bytes > 72)); then
-        die "admin password is ${bytes} UTF-8 bytes; bcrypt accepts at most 72 bytes; choose a shorter password"
+        USBC_VALIDATE_ERROR="admin password is ${bytes} UTF-8 bytes; bcrypt accepts at most 72 bytes; choose a shorter password"
+        return 1
     fi
+    return 0
+}
+
+validate_admin_password() {
+    check_password "$@" || die "$USBC_VALIDATE_ERROR"
+}
+
+check_port() {
+    local value=$1
+    USBC_VALIDATE_ERROR=''
+    [[ -n $value ]] || { USBC_VALIDATE_ERROR="dashboard port must not be empty"; return 1; }
+    ((${#value} <= 5)) || { USBC_VALIDATE_ERROR="dashboard port is out of range: $value"; return 1; }
+    [[ $value =~ ^[0-9]+$ ]] || { USBC_VALIDATE_ERROR="dashboard port must be a number (got: $value)"; return 1; }
+    ((10#$value >= 1 && 10#$value <= 65535)) \
+        || { USBC_VALIDATE_ERROR="dashboard port must be between 1 and 65535 (got: $value)"; return 1; }
+    return 0
 }
 
 validate_port() {
-    local value=$1
-    [[ -n $value ]] || die "dashboard port must not be empty"
-    ((${#value} <= 5)) || die "dashboard port is out of range: $value"
-    [[ $value =~ ^[0-9]+$ ]] || die "dashboard port must be a number (got: $value)"
-    ((10#$value >= 1 && 10#$value <= 65535)) \
-        || die "dashboard port must be between 1 and 65535 (got: $value)"
+    check_port "$@" || die "$USBC_VALIDATE_ERROR"
+}
+
+check_path() {
+    local name=$1
+    local value=$2
+    USBC_VALIDATE_ERROR=''
+    [[ -n $value ]] || { USBC_VALIDATE_ERROR="$name must not be empty"; return 1; }
+    [[ $value == /* ]] || { USBC_VALIDATE_ERROR="$name must be an absolute path: $value"; return 1; }
+    [[ $value != '/' ]] || { USBC_VALIDATE_ERROR="$name must not be /"; return 1; }
+    [[ $value != *'..'* ]] || { USBC_VALIDATE_ERROR="$name must not contain '..': $value"; return 1; }
+    [[ $value != *$'\n'* && $value != *$'\r'* && $value != *$'\t'* ]] \
+        || { USBC_VALIDATE_ERROR="$name must not contain control characters"; return 1; }
+    return 0
 }
 
 validate_path() {
-    local name=$1
-    local value=$2
-    [[ -n $value ]] || die "$name must not be empty"
-    [[ $value == /* ]] || die "$name must be an absolute path: $value"
-    [[ $value != '/' ]] || die "$name must not be /"
-    [[ $value != *'..'* ]] || die "$name must not contain '..': $value"
-    [[ $value != *$'\n'* && $value != *$'\r'* && $value != *$'\t'* ]] \
-        || die "$name must not contain control characters"
+    check_path "$@" || die "$USBC_VALIDATE_ERROR"
 }
 
-canonical_path() {
+check_canonical() {
     local name=$1
     local value=$2
     local canonical=''
 
-    validate_path "$name" "$value"
+    check_path "$name" "$value" || return 1
     if ! canonical=$(realpath -m -- "$value"); then
-        die "$name cannot be resolved to an absolute path: $value"
+        USBC_VALIDATE_ERROR="$name cannot be resolved to an absolute path: $value"
+        return 1
     fi
-    [[ -n $canonical ]] || die "$name cannot be resolved to an absolute path: $value"
-    [[ $canonical == /* ]] || die "$name must resolve to an absolute path: $value"
-    [[ $canonical != '/' ]] || die "$name must not resolve to /: $value"
-    [[ $canonical != *'..'* ]] || die "$name must not contain '..': $value"
+    [[ -n $canonical ]] || { USBC_VALIDATE_ERROR="$name cannot be resolved to an absolute path: $value"; return 1; }
+    [[ $canonical == /* ]] || { USBC_VALIDATE_ERROR="$name must resolve to an absolute path: $value"; return 1; }
+    [[ $canonical != '/' ]] || { USBC_VALIDATE_ERROR="$name must not resolve to /: $value"; return 1; }
+    [[ $canonical != *'..'* ]] || { USBC_VALIDATE_ERROR="$name must not contain '..': $value"; return 1; }
     [[ $canonical != *$'\n'* && $canonical != *$'\r'* && $canonical != *$'\t'* ]] \
-        || die "$name must not contain control characters"
+        || { USBC_VALIDATE_ERROR="$name must not contain control characters"; return 1; }
     printf '%s' "$canonical"
 }
 
-validate_destination_safety() {
+canonical_path() {
+    check_canonical "$@" || die "$USBC_VALIDATE_ERROR"
+}
+
+check_destination() {
     local name=$1
     local value=$2
     local canonical=''
 
-    canonical=$(canonical_path "$name" "$value")
+    USBC_VALIDATE_ERROR=''
+    canonical=$(check_canonical "$name" "$value") || return 1
     case "$canonical" in
         / | /etc | /etc/* | /usr | /usr/* | /var | /var/* | /boot | /boot/* | \
             /home | /home/* | /root | /root/* | /dev | /dev/* | /proc | /proc/* | \
             /sys | /sys/* | /run | /run/* | /opt | /opt/*)
-            die "$name must not be a protected host path: $canonical"
+            USBC_VALIDATE_ERROR="$name must not be a protected host path: $canonical"
+            return 1
             ;;
         /srv/usb-ingest | /srv/usb-ingest/*)
-            die "$name must not overlap the USB ingest root: $canonical"
+            USBC_VALIDATE_ERROR="$name must not overlap the USB ingest root: $canonical"
+            return 1
             ;;
         /srv/usbcopy/events | /srv/usbcopy/events/*)
-            die "$name must not overlap the event spool: $canonical"
+            USBC_VALIDATE_ERROR="$name must not overlap the event spool: $canonical"
+            return 1
             ;;
     esac
-    [[ $canonical != *,* ]] || die "$name must not contain a comma: $canonical"
-    [[ $canonical != *=* ]] || die "$name must not contain '=': $canonical"
+    [[ $canonical != *,* ]] || { USBC_VALIDATE_ERROR="$name must not contain a comma: $canonical"; return 1; }
+    [[ $canonical != *=* ]] || { USBC_VALIDATE_ERROR="$name must not contain '=': $canonical"; return 1; }
     [[ $canonical != *[[:cntrl:]]* ]] \
-        || die "$name must not contain control characters: $canonical"
+        || { USBC_VALIDATE_ERROR="$name must not contain control characters: $canonical"; return 1; }
     printf '%s' "$canonical"
 }
 
-validate_hostname() {
+validate_destination_safety() {
+    check_destination "$@" || die "$USBC_VALIDATE_ERROR"
+}
+
+check_hostname() {
     local value=$1
+    USBC_VALIDATE_ERROR=''
     ((${#value} >= 1 && ${#value} <= 63)) \
-        || die "hostname must be 1-63 characters (got: $value)"
+        || { USBC_VALIDATE_ERROR="hostname must be 1-63 characters (got: $value)"; return 1; }
     [[ $value =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] \
-        || die "invalid hostname (use letters, digits and inner dashes): $value"
+        || { USBC_VALIDATE_ERROR="invalid hostname (use letters, digits and inner dashes): $value"; return 1; }
+    return 0
+}
+
+validate_hostname() {
+    check_hostname "$@" || die "$USBC_VALIDATE_ERROR"
 }
 
 is_ipv4() {

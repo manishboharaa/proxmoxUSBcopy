@@ -581,9 +581,10 @@ assert_not_contains 'token123' "$out" 'bootstrap failure'
 pass "piped install rejects credentials without echoing them"
 
 out=$(bash <"$INSTALL" 2>&1) && status=0 || status=$?
-((status != 0)) || fail "OWNER placeholder bootstrap URL was accepted"
-assert_contains 'OWNER placeholder' "$out" 'bootstrap failure'
-pass "piped install rejects the default OWNER placeholder"
+((status != 0)) || fail "no-arg piped bootstrap unexpectedly succeeded"
+assert_contains 'install.sh: error:' "$out" 'bootstrap failure'
+assert_not_contains 'unbound variable' "$out" 'bootstrap failure'
+pass "piped bootstrap without args fails cleanly with the published repo URL"
 
 for placeholder in '<owner>' OWNER owner; do
     out=$(bash -s -- --repo-url "https://example.test/$placeholder/proxmoxUSBcopy" \
