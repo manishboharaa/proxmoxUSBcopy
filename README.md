@@ -292,12 +292,15 @@ appears at the top of every page with the installed and latest versions.
 The dashboard runs inside the unprivileged CT, so it cannot update itself —
 the button copies the command and you run it on the Proxmox host:
 
-1. Click **Copy update command** in the banner.
-2. Open your Proxmox host shell (Datacenter → your node → **Shell**, or SSH to
-   the host).
-3. Paste the command and press Enter. The script updates the CT in place —
-   your config, password, and data are kept.
-4. Wait for `update complete`, then refresh the dashboard tab.
+```
+curl -fsSL https://raw.githubusercontent.com/manishboharaa/proxmoxUSBcopy/main/setup/install.sh | bash -s -- --update
+```
+
+1. Open your Proxmox host shell (Datacenter → your node → **Shell**, or SSH to
+   the host as root).
+2. Paste the command above and press Enter. The script updates the CT in
+   place — your config, password, and data are kept.
+3. Wait for `update complete`, then refresh the dashboard tab.
 
 ### The CT has no root password
 
