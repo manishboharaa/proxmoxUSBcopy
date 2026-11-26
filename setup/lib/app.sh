@@ -238,7 +238,9 @@ install_app() {
     ct_exec install -d -m 0755 "$APP_CT_DIR" || die "could not create $APP_CT_DIR"
     ct_exec install -d -m 0750 -o usbcopy -g usbcopy "$APP_CT_DATA" \
         || die "could not create $APP_CT_DATA"
-    ct_exec install -d -m 0750 -o root -g usbcopy /etc/usbcopy \
+    # The app replaces config.toml atomically, which creates a temp file in
+    # this directory, so the usbcopy user must own the directory itself.
+    ct_exec install -d -m 0700 -o usbcopy -g usbcopy /etc/usbcopy \
         || die "could not create /etc/usbcopy"
     ct_exec install -d -m 0755 "$APP_CT_MOUNTS" /data \
         || die "could not create the container mount points"
@@ -356,10 +358,16 @@ update_app() {
 
     # Installs from before password changes existed left the config owned by
     # root; the app now needs to rewrite it when the password is changed.
+    # Installs also used to create /etc/usbcopy as root:usbcopy 0750, which
+    # blocks the atomic temp file write (Errno 13) — fix both.
     ct_exec chown usbcopy:usbcopy "$APP_CT_CONFIG" \
         || die "could not set config.toml ownership in CT $CT_ID"
     ct_exec chmod 0600 "$APP_CT_CONFIG" \
         || die "could not set config.toml mode in CT $CT_ID"
+    ct_exec chown usbcopy:usbcopy "$(dirname -- "$APP_CT_CONFIG")" \
+        || die "could not set /etc/usbcopy ownership in CT $CT_ID"
+    ct_exec chmod 0700 "$(dirname -- "$APP_CT_CONFIG")" \
+        || die "could not set /etc/usbcopy mode in CT $CT_ID"
 
     # Older units made /etc read-only for the service (ProtectSystem=full
     # without a ReadWritePaths exception), so a password change could never

@@ -232,6 +232,7 @@ assert_contains 'systemctl enable usbcopy.service' "$log" 'fake log'
 assert_contains 'systemctl start usbcopy.service' "$log" 'fake log'
 assert_contains 'chown usbcopy:usbcopy /etc/usbcopy/config.toml' "$log" 'fake log'
 assert_contains 'chmod 0600 /etc/usbcopy/config.toml' "$log" 'fake log'
+assert_contains 'install -d -m 0700 -o usbcopy -g usbcopy /etc/usbcopy' "$log" 'fake log'
 assert_contains 'http://10.0.0.50:8089' "$out" 'install output'
 assert_contains 'http://10.0.0.50:8089/healthz' "$log" 'fake log'
 assert_not_contains '/api/status' "$log" 'fake log'
@@ -1131,6 +1132,8 @@ assert_contains 'http://10.0.0.50:9090/healthz' "$log" 'fake log'
 assert_not_contains 'chown root:usbcopy /etc/usbcopy/config.toml' "$log" 'fake log'
 assert_contains 'chown usbcopy:usbcopy /etc/usbcopy/config.toml' "$log" 'fake log'
 assert_contains 'chmod 0600 /etc/usbcopy/config.toml' "$log" 'fake log'
+assert_contains 'chown usbcopy:usbcopy /etc/usbcopy' "$log" 'fake log'
+assert_contains 'chmod 0700 /etc/usbcopy' "$log" 'fake log'
 update_unit="$USBC_FAKE_PUSH_DIR/usbcopy.service"
 [[ -f $update_unit ]] || fail "update_app did not refresh usbcopy.service"
 assert_file_contains 'ReadWritePaths=/var/lib/usbcopy /data /etc/usbcopy' \
