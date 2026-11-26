@@ -414,6 +414,7 @@ out=$("$INSTALL" --update --dry-run 2>&1) && status=0 || status=$?
 assert_contains 'PLAN: update: read the existing install manifest and check the CT' "$out"
 assert_contains 'PLAN: update: reinstall host scripts, udev rule, and systemd units' "$out"
 assert_contains 'PLAN: update: push the local app/ tree into /opt/usbcopy in CT ' "$out"
+assert_contains 'PLAN: update: refresh usbcopy.service in CT ' "$out"
 assert_contains 'PLAN: update: restart usbcopy.service in CT ' "$out"
 assert_not_contains 'PLAN: create CT' "$out"
 pass "--update --dry-run prints only update plan lines"

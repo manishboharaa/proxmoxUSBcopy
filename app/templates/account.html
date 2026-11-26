@@ -84,7 +84,9 @@
         })
       }).then(function (result) {
         return result.json().then(function (body) {
-          return { ok: result.ok, body: body };
+          return { ok: result.ok, status: result.status, body: body };
+        }, function () {
+          return { ok: result.ok, status: result.status, body: null };
         });
       }).then(function (result) {
         if (result.ok) {
@@ -93,7 +95,13 @@
             "Password changed. Use the new password at the next sign-in.";
           return;
         }
-        fail(result.body.detail || "The password could not be changed.");
+        if (result.body && result.body.detail) {
+          fail(result.body.detail);
+        } else if (result.status) {
+          fail("The server returned an error (HTTP " + result.status + ").");
+        } else {
+          fail("The password could not be changed.");
+        }
       }).catch(function () {
         fail("The request failed. Check the connection and try again.");
       });

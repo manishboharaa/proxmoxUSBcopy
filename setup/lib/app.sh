@@ -166,7 +166,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/var/lib/usbcopy /data
+ReadWritePaths=/var/lib/usbcopy /data /etc/usbcopy
 StandardOutput=journal
 StandardError=journal
 
@@ -324,6 +324,7 @@ update_app() {
     if ((DRY_RUN == 1)); then
         plan "update: push the local app/ tree into /opt/usbcopy in CT $CT_ID"
         plan "update: pip install -r requirements.txt into the existing venv"
+        plan "update: refresh usbcopy.service in CT $CT_ID (keeps the sandbox writable for the config)"
         plan "update: restart usbcopy.service in CT $CT_ID and check the dashboard"
         return 0
     fi
@@ -360,6 +361,20 @@ update_app() {
     ct_exec chmod 0600 "$APP_CT_CONFIG" \
         || die "could not set config.toml mode in CT $CT_ID"
 
+    # Older units made /etc read-only for the service (ProtectSystem=full
+    # without a ReadWritePaths exception), so a password change could never
+    # persist. Re-render and replace the unit on every update.
+    render_unit "$tmp_dir/usbcopy.service" \
+        || die "could not render usbcopy.service in CT $CT_ID"
+    pct push "$CT_ID" "$tmp_dir/usbcopy.service" "$APP_CT_UNIT" \
+        || die "could not push usbcopy.service to CT $CT_ID"
+    ct_exec chown root:root "$APP_CT_UNIT" \
+        || die "could not set usbcopy.service ownership in CT $CT_ID"
+    ct_exec chmod 0644 "$APP_CT_UNIT" \
+        || die "could not set usbcopy.service mode in CT $CT_ID"
+
+    ct_exec systemctl daemon-reload \
+        || die "systemctl daemon-reload failed in CT $CT_ID"
     ct_exec systemctl restart usbcopy.service \
         || die "could not restart usbcopy.service in CT $CT_ID"
     wait_for_usbcopy_app

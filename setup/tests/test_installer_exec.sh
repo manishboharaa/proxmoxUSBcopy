@@ -268,6 +268,7 @@ unit="$USBC_FAKE_PUSH_DIR/usbcopy.service"
 assert_file_contains 'User=usbcopy' "$unit" 'unit'
 assert_file_contains 'ExecStart=/opt/usbcopy/venv/bin/python -m usbcopy.main' "$unit" 'unit'
 assert_file_contains 'Restart=on-failure' "$unit" 'unit'
+assert_file_contains 'ReadWritePaths=/var/lib/usbcopy /data /etc/usbcopy' "$unit" 'unit'
 pass "install_app installs only missing packages, pushes the app, renders config, and starts a healthy unit"
 
 DEST_MOVIES="$WORK/media/Films"
@@ -1130,11 +1131,16 @@ assert_contains 'http://10.0.0.50:9090/healthz' "$log" 'fake log'
 assert_not_contains 'chown root:usbcopy /etc/usbcopy/config.toml' "$log" 'fake log'
 assert_contains 'chown usbcopy:usbcopy /etc/usbcopy/config.toml' "$log" 'fake log'
 assert_contains 'chmod 0600 /etc/usbcopy/config.toml' "$log" 'fake log'
+update_unit="$USBC_FAKE_PUSH_DIR/usbcopy.service"
+[[ -f $update_unit ]] || fail "update_app did not refresh usbcopy.service"
+assert_file_contains 'ReadWritePaths=/var/lib/usbcopy /data /etc/usbcopy' \
+    "$update_unit" 'updated unit'
+assert_contains 'systemctl daemon-reload' "$log" 'fake log'
 assert_not_contains 'useradd' "$log" 'fake log'
 assert_not_contains 'apt-get' "$log" 'fake log'
 [[ -f $USBC_FAKE_PUSH_DIR/config.toml ]] \
     && fail "update_app must not push a rendered config.toml"
-pass "update refreshes host wiring and app files without touching config"
+pass "update refreshes host wiring, app files, and the unit without touching config"
 
 : >"$USBC_FAKE_LOG"
 rm -f -- "$USBC_MANIFEST_PATH"
